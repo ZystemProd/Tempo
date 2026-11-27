@@ -14,7 +14,7 @@ from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QObject, QProcess,
 from PySide6.QtCore import QRectF, QSize, QPointF
 from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPalette,
                            QPen, QPixmap, QPolygonF, QShortcut)
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog,
@@ -72,6 +72,13 @@ QListWidget#lyrics {{ background: {BG}; border: 0; font-size: 16px; }}
 QListWidget#lyrics::item {{ padding: 4px 2px; border-radius: 0; }}
 QListWidget#lyrics::item:selected {{ background: transparent; }}
 QFrame#lyricsPanel {{ border-left: 1px solid {LINE}; }}
+QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
+QScrollBar:horizontal {{ background: transparent; height: 10px; margin: 2px; }}
+QScrollBar::handle {{ background: #4a4440; border-radius: 4px; min-height: 30px; min-width: 30px; }}
+QScrollBar::handle:hover {{ background: #6a625b; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
+QSplitter::handle {{ background: transparent; }}
 QMenu {{ background: {PANEL}; border: 1px solid {LINE}; }}
 QMenu::item:selected {{ background: {ACC}; }}
 QProgressBar {{ border: 1px solid {LINE}; border-radius: 6px; text-align: center; }}
@@ -174,8 +181,8 @@ class Waveform(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setMinimumHeight(90)
-        self.setMaximumHeight(150)
+        self.setMinimumHeight(84)
+        self.setMaximumHeight(120)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setCursor(Qt.PointingHandCursor)
         self.peaks = None
@@ -495,8 +502,8 @@ class MainWindow(QMainWindow):
         self.search.setMinimumWidth(300)
         self.search.textChanged.connect(lambda: self.refresh())
         tb.addWidget(self.search)
-        self.ly_btn = QPushButton('Lyrics', checkable=True)
-        self.ly_btn.setToolTip('Show or hide the lyrics sidebar')
+        self.ly_btn = QPushButton('Side panel', checkable=True)
+        self.ly_btn.setToolTip('Show or hide lyrics and instruments')
         self.ly_btn.toggled.connect(self._toggle_lyrics)
         tb.addWidget(self.ly_btn)
         self.upd_btn = QPushButton('Updates')
@@ -529,10 +536,20 @@ class MainWindow(QMainWindow):
 
         self.vsplit = QSplitter(Qt.Vertical)
         hsplit.addWidget(self.vsplit)
-        hsplit.addWidget(self._build_lyrics())
+        self.side_tabs = QTabWidget()
+        self.side_tabs.setMinimumWidth(270)
+        self.side_tabs.addTab(self._build_lyrics(), 'Lyrics')
+        inst = QWidget()
+        self.stems_lay = QVBoxLayout(inst)
+        self.stems_lay.setContentsMargins(12, 12, 12, 12)
+        self.side_tabs.addTab(inst, 'Instruments')
+        self.side_tabs.setCurrentIndex(int(self.settings.value('side_tab', 0) or 0))
+        self.side_tabs.currentChanged.connect(lambda i: self.settings.setValue('side_tab', i))
+        self.ly_panel = self.side_tabs
+        hsplit.addWidget(self.side_tabs)
         hsplit.setStretchFactor(1, 1)
         hsplit.setStretchFactor(2, 0)
-        hsplit.setSizes([220, 1000, 320])
+        hsplit.setSizes([200, 1000, 300])
         show = self.settings.value('lyrics', 'true') in (True, 'true')
         self.ly_btn.setChecked(show)
         self.ly_panel.setVisible(show)
@@ -554,9 +571,12 @@ class MainWindow(QMainWindow):
         self.table.setDragDropMode(QAbstractItemView.DragOnly)
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(QHeaderView.Interactive)
-        h.setStretchLastSection(True)
-        for c, w in enumerate([34, 320, 190, 70, 60, 90, 220, 110]):
+        h.setStretchLastSection(False)
+        for c, w in enumerate([34, 300, 160, 64, 54, 80, 160, 100]):
             self.table.setColumnWidth(c, w)
+        h.setSectionResizeMode(1, QHeaderView.Stretch)
+        h.setMinimumSectionSize(30)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.table.doubleClicked.connect(lambda i: self.open_song(self._row(i)['id']))
         self.table.clicked.connect(self._table_clicked)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -577,7 +597,7 @@ class MainWindow(QMainWindow):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(self._build_player())
         self.vsplit.addWidget(scroll)
-        self.vsplit.setSizes([260, 470])
+        self.vsplit.setSizes([230, 480])
         self.setAcceptDrops(True)
 
         for key, fn in ((Qt.Key_Space, self.toggle), (Qt.Key_Left, lambda: self.seek_rel(-5)),
@@ -639,22 +659,27 @@ class MainWindow(QMainWindow):
         tr.addWidget(self.export_btn)
         v.addLayout(tr)
 
-        row = QHBoxLayout()
-        row.setSpacing(12)
-        sb = self._speed_box()
-        row.addWidget(sb, 4, Qt.AlignTop)
+        self.ctl_row = QBoxLayout(QBoxLayout.LeftToRight)
+        self.ctl_row.setSpacing(12)
+        self.ctl_row.addWidget(self._speed_box(), 1, Qt.AlignTop)
         mid = QVBoxLayout()
         mid.setSpacing(10)
         mid.addWidget(self._pitch_box())
         mid.addWidget(self._loop_box())
         mid.addStretch(1)
-        row.addLayout(mid, 4)
-        inst = QGroupBox('Instruments')
-        self.stems_lay = QVBoxLayout(inst)
-        inst.setMinimumWidth(260)
-        row.addWidget(inst, 4)
-        v.addLayout(row)
+        self.ctl_row.addLayout(mid, 1)
+        v.addLayout(self.ctl_row)
+        v.addStretch(1)
+        w.installEventFilter(self)
+        self._player_w = w
         return w
+
+    def eventFilter(self, obj, ev):
+        if obj is getattr(self, '_player_w', None) and ev.type() == ev.Type.Resize:
+            want = QBoxLayout.TopToBottom if obj.width() < 700 else QBoxLayout.LeftToRight
+            if self.ctl_row.direction() != want:
+                self.ctl_row.setDirection(want)
+        return super().eventFilter(obj, ev)
 
     def _speed_box(self):
         g = QGroupBox('Speed')
@@ -690,13 +715,13 @@ class MainWindow(QMainWindow):
         self.p_val.setStyleSheet('font-size: 24px; font-weight: 700; min-width: 44px;')
         self.p_val.setAlignment(Qt.AlignCenter)
         self.p_up = QPushButton('+1', clicked=lambda: self._step_pitch(1))
-        self.p_name = QLabel('semitones · original key', objectName='soft')
+        self.p_name = QLabel('original key', objectName='soft')
         for x in (self.p_down, self.p_val, self.p_up, self.p_name):
             r.addWidget(x)
         r.addStretch(1)
         v.addLayout(r)
         c = QHBoxLayout()
-        c.addWidget(QLabel('Fine tune'))
+        c.addWidget(QLabel('Fine'))
         self.cents = QSlider(Qt.Horizontal, minimum=-50, maximum=50, value=0)
         self.cents.valueChanged.connect(lambda x: self.set_pitch(self.whole + x / 100))
         self.cents_lbl = QLabel('0 ¢')
@@ -729,7 +754,8 @@ class MainWindow(QMainWindow):
         self.a_btn = QPushButton('Set A', clicked=self.set_a)
         self.b_btn = QPushButton('Set B', clicked=self.set_b)
         self.loop_btn = QPushButton('Loop off', objectName='loopOn', checkable=True, clicked=self.toggle_loop)
-        self.toa_btn = QPushButton('Back to A', clicked=lambda: self.seek(self.loop_a or 0))
+        self.toa_btn = QPushButton('To A', clicked=lambda: self.seek(self.loop_a or 0))
+        self.toa_btn.setToolTip('Back to the start of the loop')
         clr = QPushButton('Clear', clicked=lambda: self.set_loop(None, None, False))
         for x in (self.a_btn, self.b_btn, self.loop_btn, self.toa_btn, clr):
             r.addWidget(x)
@@ -738,11 +764,9 @@ class MainWindow(QMainWindow):
 
     # ---------- lyrics ----------
     def _build_lyrics(self):
-        w = QFrame(objectName='lyricsPanel')
-        w.setMinimumWidth(260)
+        w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(12, 0, 0, 0)
-        v.addWidget(QLabel('Lyrics', objectName='title'))
+        v.setContentsMargins(10, 10, 10, 10)
         r = QHBoxLayout()
         self.ly_query = QLineEdit()
         self.ly_query.setPlaceholderText('Song title and artist')
@@ -765,7 +789,8 @@ class MainWindow(QMainWindow):
         self.ly_status.setWordWrap(True)
         v.addWidget(self.ly_status)
         t = QHBoxLayout()
-        t.addWidget(QLabel('Timing'))
+        self.ly_timing_lbl = QLabel('Timing')
+        t.addWidget(self.ly_timing_lbl)
         self.ly_earlier = QPushButton('Earlier', clicked=lambda: self._nudge_lyrics(-0.25))
         self.ly_earlier.setToolTip('Highlight lines a quarter second sooner')
         self.ly_later = QPushButton('Later', clicked=lambda: self._nudge_lyrics(0.25))
@@ -781,7 +806,9 @@ class MainWindow(QMainWindow):
             t.addWidget(x)
         t.addStretch(1)
         v.addLayout(t)
-        self.ly_timing = [self.ly_earlier, self.ly_later, self.ly_sync, self.ly_off_lbl]
+        self.ly_timing = [self.ly_timing_lbl, self.ly_earlier, self.ly_later, self.ly_sync, self.ly_off_lbl]
+        for x in self.ly_timing:
+            x.hide()
         b = QHBoxLayout()
         self.ly_follow = QCheckBox('Follow the music')
         self.ly_follow.setChecked(True)
@@ -789,7 +816,6 @@ class MainWindow(QMainWindow):
         b.addStretch(1)
         b.addWidget(QPushButton('Paste lyrics…', clicked=self._paste_lyrics))
         v.addLayout(b)
-        self.ly_panel = w
         return w
 
     def _toggle_lyrics(self, on):
@@ -1430,7 +1456,7 @@ class MainWindow(QMainWindow):
         whole = self.whole
         self.p_val.setText('%+d' % whole if whole else '0')
         name = INTERVALS[min(12, abs(whole))]
-        self.p_name.setText('semitones · ' + (name if whole == 0 else ('up a ' if whole > 0 else 'down a ') + name))
+        self.p_name.setText(name if whole == 0 else ('up a ' if whole > 0 else 'down a ') + name)
         self.cents_lbl.setText('%+d ¢' % self.cents.value() if self.cents.value() else '0 ¢')
         self.a_btn.setText('A  ' + fmt(self.loop_a, True) if self.loop_a is not None else 'Set A')
         self.b_btn.setText('B  ' + fmt(self.loop_b, True) if self.loop_b is not None else 'Set B')
