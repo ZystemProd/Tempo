@@ -12,6 +12,31 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 QStandardPaths.setTestModeEnabled(True)
 
+import types  # noqa: E402
+
+_sd = types.ModuleType('sounddevice')  # CI machines have no sound card
+_sd.query_devices = lambda kind=None: {'default_samplerate': 44100.0}
+
+
+class _Stream:
+    latency = 0.0
+
+    def __init__(self, **k):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def close(self):
+        pass
+
+
+_sd.OutputStream = _Stream
+sys.modules['sounddevice'] = _sd
+
 from tempo import app as tapp, audio  # noqa: E402
 
 out_dir = sys.argv[1] if len(sys.argv) > 1 else 'screens'
