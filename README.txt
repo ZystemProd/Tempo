@@ -53,8 +53,6 @@ Player (double-click a song)
   - Pitch: transpose in semitones; "Fine tune" (cents) matches a recording to
     a piano that isn't at A440.
   - Loop: Set A / Set B, or drag across the waveform.
-  - Speed trainer: while a loop plays, Tempo raises the speed step by step,
-    e.g. every 2 loops add 5% until 100%.
   - Each song opens at 100% speed, original pitch and no loop.
   - "Save practice track..." writes MP3/WAV/M4A/FLAC at the current speed and
     pitch, for the whole song or just the loop. Handy for students.
@@ -72,7 +70,7 @@ Lyrics (sidebar on the right, toggle with the "Lyrics" button)
   - Wrong song or nothing found? Edit the search box (e.g. add the artist),
     pick another version from the list, or use "Paste lyrics..." to add your own.
 
-Keyboard: Space play/pause, Left/Right 5 s, [ and ] speed -/+5%,
+Keyboard: Space play/pause, Enter back to the start, Left/Right 5 s, [ and ] speed -/+5%,
 A and B set loop points, L loop on/off, Ctrl/Cmd+F search.
 
 

@@ -1,0 +1,21 @@
+name: Screenshot
+# Renders the window offscreen at laptop sizes so layout changes can be checked.
+on:
+  workflow_dispatch:
+
+jobs:
+  shot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          sudo apt-get update -q && sudo apt-get install -y -q libportaudio2 libegl1 libxkbcommon0 fonts-inter || sudo apt-get install -y -q libportaudio2 libegl1 libxkbcommon0
+          python -m pip install -q -r requirements.txt
+          python tools/screenshot.py screens
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: screens

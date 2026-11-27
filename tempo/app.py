@@ -29,6 +29,7 @@ from .stretch import engine_problem
 APP = 'Tempo'
 MIME = 'application/x-tempo-song-ids'
 INK, BG, PANEL, LINE, SOFT, ACC = '#f1ece2', '#151311', '#1f1c1a', '#34302d', '#a59d91', '#c8174a'
+LOOP = '#4cc9f0'  # loop markers and region; the playhead stays red
 STEM_LABELS = {'vocals': 'Vocals', 'drums': 'Drums', 'bass': 'Bass', 'other': 'Other', 'piano': 'Piano', 'guitar': 'Guitar'}
 INTERVALS = ['original key', 'half step', 'whole step', 'minor 3rd', 'major 3rd', 'perfect 4th', 'tritone',
              'perfect 5th', 'minor 6th', 'major 6th', 'minor 7th', 'major 7th', 'octave']
@@ -36,17 +37,18 @@ INTERVALS = ['original key', 'half step', 'whole step', 'minor 3rd', 'major 3rd'
 QSS = f"""
 * {{ color: {INK}; font-size: 14px; }}
 QMainWindow, QWidget#root, QScrollArea, QScrollArea > QWidget > QWidget {{ background: {BG}; }}
-QToolBar {{ background: {BG}; border: 0; border-bottom: 4px solid {ACC}; padding: 8px; spacing: 8px; }}
-QGroupBox {{ background: {PANEL}; border: 1px solid {LINE}; border-radius: 10px; margin-top: 22px; padding: 12px 10px 10px 10px; }}
+QToolBar {{ background: {BG}; border: 0; border-bottom: 4px solid {ACC}; padding: 8px 16px; spacing: 8px; }}
+QGroupBox {{ background: {PANEL}; border: 1px solid {LINE}; border-radius: 10px; margin-top: 18px; padding: 6px 10px 8px 10px; }}
 QGroupBox::title {{ subcontrol-origin: margin; left: 12px; top: 2px; color: {SOFT}; font-weight: 600; }}
-QPushButton {{ background: #2a2624; border: 1px solid {LINE}; border-radius: 8px; padding: 7px 12px; min-height: 22px; }}
+QPushButton {{ background: #2a2624; border: 1px solid {LINE}; border-radius: 8px; padding: 5px 10px; min-height: 20px; }}
 QPushButton:hover {{ background: #36312e; }}
 QPushButton:checked, QPushButton#accent {{ background: {ACC}; border-color: {ACC}; color: white; }}
 QPushButton:disabled {{ color: #6f685f; }}
-QPushButton#play {{ background: {ACC}; border: 0; border-radius: 30px; min-width: 60px; max-width: 60px; min-height: 60px; max-height: 60px; padding: 0; }}
+QPushButton#loopOn:checked {{ background: {LOOP}; border-color: {LOOP}; color: #0d1b22; }}
+QPushButton#play {{ background: {ACC}; border: 0; border-radius: 26px; min-width: 52px; max-width: 52px; min-height: 52px; max-height: 52px; padding: 0; }}
 QPushButton#play:hover {{ background: #de2a5d; }}
 QPushButton#play:pressed {{ background: #a01240; }}
-QPushButton#round {{ background: transparent; border: 1px solid {LINE}; border-radius: 23px; min-width: 46px; max-width: 46px; min-height: 46px; max-height: 46px; padding: 0; }}
+QPushButton#round {{ background: transparent; border: 1px solid {LINE}; border-radius: 20px; min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; padding: 0; }}
 QPushButton#round:hover {{ background: #2a2624; border-color: #5a534c; }}
 QPushButton#round:pressed {{ background: #36312e; }}
 QLineEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{ background: #121110; border: 1px solid {LINE}; border-radius: 8px; padding: 6px 8px; selection-background-color: {ACC}; }}
@@ -62,8 +64,8 @@ QTabWidget::pane {{ border: 1px solid {LINE}; border-radius: 10px; background: {
 QTabBar::tab {{ background: transparent; color: {SOFT}; padding: 8px 14px; font-weight: 600; }}
 QTabBar::tab:selected {{ color: {INK}; border-bottom: 3px solid {ACC}; }}
 QStatusBar {{ color: {SOFT}; }}
-QLabel#big {{ font-size: 46px; font-weight: 700; }}
-QLabel#title {{ font-size: 22px; font-weight: 700; }}
+QLabel#big {{ font-size: 34px; font-weight: 700; }}
+QLabel#title {{ font-size: 19px; font-weight: 700; }}
 QLabel#soft {{ color: {SOFT}; }}
 QLabel#time {{ font-size: 18px; font-weight: 600; }}
 QListWidget#lyrics {{ background: {BG}; border: 0; font-size: 16px; }}
@@ -172,7 +174,8 @@ class Waveform(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setMinimumHeight(130)
+        self.setMinimumHeight(90)
+        self.setMaximumHeight(150)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.setCursor(Qt.PointingHandCursor)
         self.peaks = None
@@ -235,7 +238,7 @@ class Waveform(QWidget):
             a, b, on = min(self.drag[1:3]), max(self.drag[1:3]), True
         if a is not None and b is not None:
             p.fillRect(int(x(a)), 0, max(1, int(x(b) - x(a))), base + 3,
-                       QColor(200, 23, 74, 70) if on else QColor(255, 255, 255, 18))
+                       QColor(76, 201, 240, 60) if on else QColor(255, 255, 255, 18))
         if self.peaks is not None and len(self.peaks):
             px = x(self.pos)
             n = len(self.peaks)
@@ -256,7 +259,7 @@ class Waveform(QWidget):
                     p.drawLine(tx, base + 2, tx, base + 6)
                     p.drawText(tx + 3, H - 4, fmt(t))
                 t += step
-        pen = QPen(QColor('#ff4d6d'))
+        pen = QPen(QColor(LOOP))
         pen.setWidth(2)
         p.setPen(pen)
         if not (self.drag and self.drag[3]):
@@ -264,6 +267,7 @@ class Waveform(QWidget):
                 if t is not None:
                     p.drawLine(int(x(t)), 0, int(x(t)), base + 3)
                     p.drawText(int(min(W - 12, x(t) + 4)), 16, lab)
+        pen = QPen(QColor('#ff4d6d'))
         pen.setWidth(3)
         p.setPen(pen)
         p.drawLine(int(x(self.pos)), 0, int(x(self.pos)), base + 3)
@@ -453,7 +457,8 @@ class MainWindow(QMainWindow):
         if g:
             self.restoreGeometry(g)
         else:
-            self.resize(1280, 860)
+            scr = QApplication.primaryScreen().availableGeometry()
+            self.resize(min(1280, scr.width() - 40), min(860, scr.height() - 30))
         s = self.settings.value('splitter')
         if s:
             self.vsplit.restoreState(s)
@@ -502,7 +507,7 @@ class MainWindow(QMainWindow):
         root = QWidget(objectName='root')
         self.setCentralWidget(root)
         lay = QHBoxLayout(root)
-        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setContentsMargins(20, 14, 20, 16)
         hsplit = QSplitter(Qt.Horizontal)
         lay.addWidget(hsplit)
 
@@ -568,10 +573,11 @@ class MainWindow(QMainWindow):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(self._build_player())
         self.vsplit.addWidget(scroll)
-        self.vsplit.setSizes([330, 520])
+        self.vsplit.setSizes([260, 470])
         self.setAcceptDrops(True)
 
         for key, fn in ((Qt.Key_Space, self.toggle), (Qt.Key_Left, lambda: self.seek_rel(-5)),
@@ -580,13 +586,17 @@ class MainWindow(QMainWindow):
                         (Qt.Key_B, self.set_b), (Qt.Key_L, self.toggle_loop)):
             QShortcut(QKeySequence(key), self, activated=fn)
         QShortcut(QKeySequence.Find, self, activated=self.search.setFocus)
+        for key in (Qt.Key_Return, Qt.Key_Enter):
+            QShortcut(QKeySequence(key), self, activated=self._enter_pressed)
 
     def _build_player(self):
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(0, 8, 0, 0)
+        v.setContentsMargins(4, 6, 12, 4)
+        v.setSpacing(8)
         head = QHBoxLayout()
         tv = QVBoxLayout()
+        tv.setSpacing(0)
         self.title_lbl = QLabel('No song loaded', objectName='title')
         self.sub_lbl = QLabel('Double-click a song to open it.', objectName='soft')
         tv.addWidget(self.title_lbl)
@@ -607,7 +617,7 @@ class MainWindow(QMainWindow):
         self.play_btn = QPushButton(objectName='play', clicked=self.toggle)
         self.fwd_btn = QPushButton(objectName='round', clicked=lambda: self.seek_rel(5))
         self._shown_playing = None
-        for b, k, px in ((self.back_btn, 'back', 34), (self.play_btn, 'play', 34), (self.fwd_btn, 'fwd', 34)):
+        for b, k, px in ((self.back_btn, 'back', 30), (self.play_btn, 'play', 30), (self.fwd_btn, 'fwd', 30)):
             b.setIcon(self.icons[k])
             b.setIconSize(QSize(px, px))
         self.back_btn.setToolTip('Back 5 s (←)')
@@ -631,15 +641,18 @@ class MainWindow(QMainWindow):
 
         row = QHBoxLayout()
         row.setSpacing(12)
-        row.addWidget(self._speed_box(), 4)
+        sb = self._speed_box()
+        row.addWidget(sb, 4, Qt.AlignTop)
         mid = QVBoxLayout()
+        mid.setSpacing(10)
         mid.addWidget(self._pitch_box())
         mid.addWidget(self._loop_box())
+        mid.addStretch(1)
         row.addLayout(mid, 4)
         inst = QGroupBox('Instruments')
         self.stems_lay = QVBoxLayout(inst)
-        inst.setMinimumWidth(300)
-        row.addWidget(inst, 5)
+        inst.setMinimumWidth(260)
+        row.addWidget(inst, 4)
         v.addLayout(row)
         return w
 
@@ -665,22 +678,6 @@ class MainWindow(QMainWindow):
             self.preset_btns[p] = b
             grid.addWidget(b, i // 5, i % 5)
         v.addLayout(grid)
-        tbox = QGroupBox('Speed trainer')
-        tbox.setCheckable(True)
-        tbox.setChecked(False)
-        tbox.setToolTip('While a loop plays, raise the speed step by step.')
-        tl = QHBoxLayout(tbox)
-        self.tr_every = QSpinBox(minimum=1, maximum=20, value=2, suffix=' loops')
-        self.tr_step = QSpinBox(minimum=1, maximum=25, value=5, suffix='%')
-        self.tr_max = QSpinBox(minimum=30, maximum=200, value=100, suffix='%')
-        tl.addWidget(QLabel('Every'))
-        tl.addWidget(self.tr_every)
-        tl.addWidget(QLabel('add'))
-        tl.addWidget(self.tr_step)
-        tl.addWidget(QLabel('up to'))
-        tl.addWidget(self.tr_max)
-        self.trainer = tbox
-        v.addWidget(tbox)
         v.addStretch(1)
         return g
 
@@ -731,7 +728,7 @@ class MainWindow(QMainWindow):
         r = QHBoxLayout()
         self.a_btn = QPushButton('Set A', clicked=self.set_a)
         self.b_btn = QPushButton('Set B', clicked=self.set_b)
-        self.loop_btn = QPushButton('Loop off', checkable=True, clicked=self.toggle_loop)
+        self.loop_btn = QPushButton('Loop off', objectName='loopOn', checkable=True, clicked=self.toggle_loop)
         self.toa_btn = QPushButton('Back to A', clicked=lambda: self.seek(self.loop_a or 0))
         clr = QPushButton('Clear', clicked=lambda: self.set_loop(None, None, False))
         for x in (self.a_btn, self.b_btn, self.loop_btn, self.toa_btn, clr):
@@ -903,8 +900,7 @@ class MainWindow(QMainWindow):
         if not self.ly_lines:
             self.ly_status.setText('')
         elif self.ly_synced:
-            self.ly_status.setText('Follows the music. Click a line to jump there. Out of step? Use Earlier/Later, '
-                                   'or Sync.' + src)
+            self.ly_status.setText('')
         else:
             self.ly_status.setText('These lyrics have no timing, so they don’t follow the music.' + src)
 
@@ -1344,6 +1340,17 @@ class MainWindow(QMainWindow):
         self.player.seek(t)
         self.last_pos = t
 
+    def _enter_pressed(self):
+        fw = QApplication.focusWidget()
+        if isinstance(fw, QLineEdit):  # keep Enter working in the search boxes
+            fw.returnPressed.emit()
+            return
+        if isinstance(fw, QPlainTextEdit):
+            fw.insertPlainText('\n')
+            return
+        if self.song:
+            self.seek(0.0)
+
     def seek_rel(self, d):
         if self.song:
             self.seek(max(0, min(self.player.duration, self.player.position() + d)))
@@ -1404,11 +1411,6 @@ class MainWindow(QMainWindow):
         pos = p.position()
         if self.loop_on and p.playing and pos < self.last_pos - 0.05:
             self.loop_count += 1
-            if self.trainer.isChecked() and self.loop_count % self.tr_every.value() == 0:
-                target = min(self.tr_max.value(), round(p.speed * 100) + self.tr_step.value())
-                if target > round(p.speed * 100):
-                    self.set_speed(target / 100)
-                    self.status('Speed trainer: %d%%' % target)
         self.last_pos = pos
         self.wave.set_pos(pos)
         self._tick_lyrics(pos)
