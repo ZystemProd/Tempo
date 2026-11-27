@@ -598,7 +598,8 @@ class MainWindow(QMainWindow):
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setWidget(self._build_player())
         self.vsplit.addWidget(scroll)
-        self.vsplit.setSizes([230, 480])
+        scr_h = QApplication.primaryScreen().availableGeometry().height()
+        self.vsplit.setSizes([230, 480] if scr_h >= 880 else [175, 480])
         self.setAcceptDrops(True)
 
         for key, fn in ((Qt.Key_Space, self.toggle), (Qt.Key_Left, lambda: self.seek_rel(-5)),
@@ -815,7 +816,8 @@ class MainWindow(QMainWindow):
         for x in self.ly_timing:
             x.hide()
         b = QHBoxLayout()
-        self.ly_follow = QCheckBox('Follow the music')
+        self.ly_follow = QCheckBox('Auto-scroll')
+        self.ly_follow.setToolTip('Keep the current line in view')
         self.ly_follow.setChecked(True)
         b.addWidget(self.ly_follow)
         b.addStretch(1)

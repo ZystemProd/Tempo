@@ -70,6 +70,7 @@ w.player.seek(55.0)
 for size in ((1440, 830), (1280, 760)):
     if size[0] < 1400:
         w.findChild(tapp.QSplitter).setSizes([190, 1000, 260])
+        w.vsplit.setSizes([175, 480])
     w.resize(*size)
     w.show()
     for _ in range(5):
