@@ -26,6 +26,9 @@ def run(argv):
             except Exception:
                 pass
 
+    if prog and os.environ.get('TEMPO_DEBUG'):
+        import faulthandler
+        faulthandler.dump_traceback_later(120, repeat=True, file=prog)
     try:
         _separate(src, outdir, model_name, emit)
         return 0

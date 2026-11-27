@@ -64,8 +64,17 @@ jobs:
           --collect-all lameenc --collect-data omegaconf --collect-submodules torchaudio
           run_tempo.py
       - name: Test instrument splitting (built app)
+        env:
+          TEMPO_DEBUG: '1'
         run: |
-          "${{ matrix.exe }}" --stems-worker test-song.wav out-app htdemucs progress-app.txt || true
+          python -c "
+          import subprocess, sys
+          try:
+              r = subprocess.run([sys.argv[1], '--stems-worker', 'test-song.wav', 'out-app', 'htdemucs', 'progress-app.txt'], timeout=600, capture_output=True, text=True)
+              print('exit', r.returncode); print(r.stdout[-3000:]); print(r.stderr[-3000:])
+          except subprocess.TimeoutExpired as e:
+              print('TIMED OUT'); print((e.stdout or b'')[-3000:]); print((e.stderr or b'')[-3000:])
+          " "${{ matrix.exe }}"
           cat progress-app.txt || true
           ls out-app
           test -f out-app/vocals.wav && test -f out-app/drums.wav
