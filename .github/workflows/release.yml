@@ -22,6 +22,10 @@ jobs:
           - os: macos-latest
             asset: Tempo-Mac.zip
             exe: dist/Tempo.app/Contents/MacOS/Tempo
+          - os: macos-15-intel
+            asset: Tempo-Mac-Intel.zip
+            exe: dist/Tempo.app/Contents/MacOS/Tempo
+            constraints: constraints-mac-intel.txt
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -34,7 +38,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt pylibrb pyinstaller
+          C=""
+          if [ -n "${{ matrix.constraints }}" ]; then C="-c ${{ matrix.constraints }}"; fi
+          python -m pip install -r requirements.txt pylibrb pyinstaller $C
       - name: Check the studio engine
         run: python -c "from tempo.stretch import rubberband_available as ok, engine_problem as why; print('Rubber Band R3 ready:', ok(), why())"
       - name: Make a test song

@@ -11,8 +11,11 @@ Get the newest version from **[Releases](../../releases/latest)**:
 | File | For |
 |---|---|
 | `Tempo-Windows.zip` | Windows app. Unzip and run `Tempo.exe`. |
-| `Tempo-Mac.zip` | Mac app (Apple Silicon). Unzip, then right-click `Tempo.app` > Open the first time. |
-| `Tempo-source.zip` | Python version for any Windows or Mac computer (also Intel Macs). See `README.txt` inside. |
+| `Tempo-Mac.zip` | Mac with Apple Silicon (M1, M2, M3, M4…). Unzip, then right-click `Tempo.app` > Open the first time. |
+| `Tempo-Mac-Intel.zip` | Mac with an Intel processor. Same steps. |
+| `Tempo-source.zip` | Python version for any Windows or Mac computer. See `README.txt` inside. |
+
+Not sure which Mac you have? Apple menu › About This Mac: it says either "Chip: Apple M…" or "Processor: Intel…".
 
 All three include instrument splitting.
 

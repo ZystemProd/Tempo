@@ -1,0 +1,4 @@
+# Intel Macs: PyTorch 2.2 is the last version published for them, and it needs NumPy 1.x.
+torch==2.2.2
+torchaudio==2.2.2
+numpy<2

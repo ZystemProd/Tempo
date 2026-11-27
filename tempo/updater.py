@@ -7,6 +7,7 @@
 """
 import json
 import os
+import platform
 import re
 import shutil
 import ssl
@@ -67,8 +68,14 @@ def _asset(rel, name):
     return None
 
 
+def _mac_intel():
+    return sys.platform == 'darwin' and platform.machine() == 'x86_64'
+
+
 def app_asset_name():
-    return 'Tempo-Windows.zip' if sys.platform == 'win32' else 'Tempo-Mac.zip'
+    if sys.platform == 'win32':
+        return 'Tempo-Windows.zip'
+    return 'Tempo-Mac-Intel.zip' if _mac_intel() else 'Tempo-Mac.zip'
 
 
 def _download(url, dest, progress=None):
@@ -118,7 +125,9 @@ def install_source_update(rel, progress=None):
             progress(0.7)
         py = sys.executable
         req = os.path.join(APP_DIR, 'requirements.txt')
-        r = subprocess.run([py, '-m', 'pip', 'install', '-q', '-r', req], capture_output=True, creationflags=_NO_WINDOW)
+        extra = ['-c', os.path.join(APP_DIR, 'constraints-mac-intel.txt')] if _mac_intel() else []
+        r = subprocess.run([py, '-m', 'pip', 'install', '-q', '-r', req] + extra, capture_output=True,
+                           creationflags=_NO_WINDOW)
         if r.returncode != 0:
             raise RuntimeError('Updating packages failed:\n' + r.stderr.decode('utf-8', 'replace')[-800:])
         if progress:

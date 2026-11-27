@@ -24,8 +24,13 @@ fi
 echo " Using $PY"
 "$PY" -m venv .venv || { echo " Could not create Tempo's Python environment."; read -p " Press Enter to close."; exit 1; }
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -r requirements.txt || { echo; echo " Installing failed. Check your internet connection and try again."; read -p " Press Enter to close."; exit 1; }
-.venv/bin/python -m pip install pylibrb || echo " Rubber Band could not be installed. Tempo will use its built-in engine."
+EXTRA=""
+if [ "$(.venv/bin/python -c 'import platform; print(platform.machine())')" = "x86_64" ]; then
+  echo " Intel Mac detected: using the last PyTorch version made for Intel Macs."
+  EXTRA="-c constraints-mac-intel.txt"
+fi
+.venv/bin/python -m pip install -r requirements.txt $EXTRA || { echo; echo " Installing failed. Check your internet connection and try again."; read -p " Press Enter to close."; exit 1; }
+.venv/bin/python -m pip install pylibrb $EXTRA || echo " Rubber Band could not be installed. Tempo will use its built-in engine."
 echo ""
 .venv/bin/python -c "from tempo.stretch import rubberband_available as ok, engine_problem as why; print(' Studio engine (Rubber Band R3):', 'ready' if ok() else 'not available (' + why() + ')')"
 chmod +x ./*.command 2>/dev/null
