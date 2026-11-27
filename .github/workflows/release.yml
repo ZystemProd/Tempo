@@ -1,9 +1,13 @@
 name: Build and release
 
-# Publishing a release on GitHub (Releases > Draft a new release) builds the
-# Windows and Mac apps plus the instrument-splitter add-on and attaches them.
-# "Run workflow" builds and tests without releasing.
+# Raising __version__ in tempo/__init__.py on main publishes that version automatically:
+# GitHub tags it (v1.2.3), builds the Windows and Mac apps plus the instrument-splitter
+# add-on, and attaches them to a new release. A release published by hand on GitHub
+# is built the same way. "Run workflow" builds and tests without releasing.
 on:
+  push:
+    branches: [main]
+    paths: ['tempo/__init__.py', '.github/workflows/release.yml']
   release:
     types: [published]
   workflow_dispatch:
@@ -12,7 +16,35 @@ permissions:
   contents: write
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          V=$(python3 -c "import re; print(re.search(r'[\"\']([0-9][^\"\']*)[\"\']', open('tempo/__init__.py').read()).group(1))")
+          T="v$V"
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ] && ! gh api "repos/${{ github.repository }}/git/ref/tags/$T" >/dev/null 2>&1; then
+            echo "Version $V has no release yet: publishing it."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Building $T without publishing."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
   app:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -57,6 +89,7 @@ jobs:
           path: ${{ matrix.asset }}
 
   splitter:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -135,6 +168,7 @@ jobs:
           path: ${{ matrix.asset }}
 
   source:
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -151,8 +185,8 @@ jobs:
           path: Tempo-source.zip
 
   release:
-    needs: [app, source]
-    if: github.event_name == 'release'
+    needs: [version, app, source]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -162,12 +196,15 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Tempo ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
           files: out/*
 
   release-splitter:
-    needs: [splitter]
-    if: github.event_name == 'release'
+    needs: [version, release, splitter]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -177,5 +214,5 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ needs.version.outputs.tag }}
           files: out/*

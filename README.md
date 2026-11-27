@@ -23,9 +23,9 @@ Tempo checks for new versions itself: click **Updates** in the toolbar.
 
 ## Publishing a new version
 
-1. Raise `__version__` in `tempo/__init__.py` and commit.
-2. On GitHub: **Releases › Draft a new release**, create a tag like `v1.2.0`, and click **Publish release**.
-3. GitHub Actions builds the apps and attaches them to the release (about 10–15 minutes). Tempo's **Updates** button finds it from then on.
+Raise `__version__` in `tempo/__init__.py` and push to `main`. GitHub Actions tags the version (`v1.2.3`), builds the apps and the splitter add-on, and publishes the release automatically (apps after about 5 minutes, add-on a few minutes later). Tempo's **Updates** button finds it from then on.
+
+Pushes that don't change the version don't publish anything.
 
 ## Credits
 
