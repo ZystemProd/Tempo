@@ -65,6 +65,10 @@ Lyrics (sidebar on the right, toggle with the "Lyrics" button)
     found lyrics are kept, so a song is only looked up once.
   - Many songs have timed lyrics: the current line is highlighted and the
     sidebar scrolls along, also at slower speeds. Click a line to jump there.
+  - Out of step? Timed lyrics are made for one particular recording, so a
+    different version (longer intro, radio edit, live) can be off. Use
+    "Earlier" / "Later" (a quarter second per click), or click "Sync" and then
+    the line that is being sung right now. The timing is saved per song.
   - Wrong song or nothing found? Edit the search box (e.g. add the artist),
     pick another version from the list, or use "Paste lyrics..." to add your own.
 

@@ -147,7 +147,18 @@ class Player:
         return self.src.n / self.sr
 
     def position(self):
-        return self.play_pos / self.sr
+        """The position you are hearing now: what has been sent to the sound card minus its delay."""
+        lat = 0.0
+        if self.stream is not None and self.playing:
+            try:
+                lat = float(self.stream.latency)
+            except Exception:
+                lat = 0.0
+        pos = self.play_pos - lat * self.sr * self.speed
+        lp = self.src.loop
+        if lp and pos < lp[0] and self.play_pos >= lp[0]:
+            pos += lp[1] - lp[0]
+        return max(0.0, pos) / self.sr
 
     def _seek_samples(self, p):
         p = int(max(0, min(self.src.n, p)))

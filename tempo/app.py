@@ -430,6 +430,7 @@ class MainWindow(QMainWindow):
         self._split = None
         self.ly_lines, self.ly_times, self.ly_synced, self.ly_cur = [], [], False, -1
         self.ly_results, self.ly_token, self.ly_song = [], 0, None
+        self.ly_rec, self.ly_offset = None, 0.0
         self.bus.added.connect(lambda n: (self.refresh(), self.status('Added %d song%s' % (n, '' if n == 1 else 's'))))
         self.player = Player()
         self.song = None
@@ -766,6 +767,24 @@ class MainWindow(QMainWindow):
         self.ly_status = QLabel('Open a song to see its lyrics.', objectName='soft')
         self.ly_status.setWordWrap(True)
         v.addWidget(self.ly_status)
+        t = QHBoxLayout()
+        t.addWidget(QLabel('Timing'))
+        self.ly_earlier = QPushButton('Earlier', clicked=lambda: self._nudge_lyrics(-0.25))
+        self.ly_earlier.setToolTip('Highlight lines a quarter second sooner')
+        self.ly_later = QPushButton('Later', clicked=lambda: self._nudge_lyrics(0.25))
+        self.ly_later.setToolTip('Highlight lines a quarter second later')
+        self.ly_off_lbl = QLabel('0.0 s')
+        self.ly_off_lbl.setMinimumWidth(48)
+        self.ly_off_lbl.setAlignment(Qt.AlignCenter)
+        self.ly_sync = QPushButton('Sync', checkable=True)
+        self.ly_sync.setToolTip('Click Sync, then click the line that is being sung right now. '
+                                'Everything lines up from there.')
+        self.ly_sync.toggled.connect(self._sync_mode)
+        for x in (self.ly_earlier, self.ly_off_lbl, self.ly_later, self.ly_sync):
+            t.addWidget(x)
+        t.addStretch(1)
+        v.addLayout(t)
+        self.ly_timing = [self.ly_earlier, self.ly_later, self.ly_sync, self.ly_off_lbl]
         b = QHBoxLayout()
         self.ly_follow = QCheckBox('Follow the music')
         self.ly_follow.setChecked(True)
@@ -845,6 +864,7 @@ class MainWindow(QMainWindow):
             return
         r = self.ly_results[i]
         rec = {k: r.get(k) for k in ('trackName', 'artistName', 'plainLyrics', 'syncedLyrics', 'instrumental')}
+        rec['offset'] = 0.0
         self._cache_lyrics(rec)
         self._show_lyrics(*lyrics.parse(rec), rec)
 
@@ -856,7 +876,17 @@ class MainWindow(QMainWindow):
 
     def _show_lyrics(self, lines, synced, rec):
         self.ly_list.clear()
+        self.ly_rec = rec
         self.ly_lines, self.ly_synced, self.ly_cur = lines, synced, -1
+        try:
+            off = float((rec or {}).get('offset') or 0.0)
+        except (TypeError, ValueError):
+            off = 0.0
+        self.ly_offset = off
+        self.ly_off_lbl.setText('%+.1f s' % off if abs(off) >= 0.05 else '0.0 s')
+        self.ly_sync.setChecked(False)
+        for x in self.ly_timing:
+            x.setVisible(bool(synced))
         self.ly_times = [t for t, _ in lines] if synced else []
         for t, text in lines:
             it = QListWidgetItem(text or ' ')
@@ -864,19 +894,53 @@ class MainWindow(QMainWindow):
                 it.setForeground(QColor(SOFT))
                 it.setToolTip('Jump to %s' % fmt(t))
             self.ly_list.addItem(it)
-        if not lines:
+        self._lyrics_status()
+
+    def _lyrics_status(self):
+        rec, src = self.ly_rec, ''
+        if rec and rec.get('trackName'):
+            src = ' Lyrics from LRCLIB.'
+        if not self.ly_lines:
             self.ly_status.setText('')
-        elif synced:
-            self.ly_status.setText('Follows the music. Click a line to jump there. Lyrics from LRCLIB.'
-                                   if rec and rec.get('trackName') else 'Follows the music. Click a line to jump there.')
+        elif self.ly_synced:
+            self.ly_status.setText('Follows the music. Click a line to jump there. Out of step? Use Earlier/Later, '
+                                   'or Sync.' + src)
         else:
-            self.ly_status.setText('These lyrics have no timing, so they don’t follow the music.'
-                                   + (' Lyrics from LRCLIB.' if rec and rec.get('trackName') else ''))
+            self.ly_status.setText('These lyrics have no timing, so they don’t follow the music.' + src)
 
     def _lyric_clicked(self, it):
         i = self.ly_list.row(it)
-        if self.ly_synced and 0 <= i < len(self.ly_times) and self.song:
-            self.seek(max(0.0, self.ly_times[i] - 0.3))
+        if not (self.ly_synced and 0 <= i < len(self.ly_times) and self.song):
+            return
+        if self.ly_sync.isChecked():
+            self._set_lyrics_offset(self.player.position() - self.ly_times[i])
+            self.ly_sync.setChecked(False)
+            self.status('Lyrics synced: that line starts now.')
+            return
+        self.seek(max(0.0, self.ly_times[i] + self.ly_offset - 0.3))
+
+    def _sync_mode(self, on):
+        if on:
+            self.ly_status.setText('Now click the line that is being sung right now.')
+            if self.song and not self.player.playing:
+                self.toggle()
+        else:
+            self._lyrics_status()
+
+    def _nudge_lyrics(self, d):
+        self._set_lyrics_offset(self.ly_offset + d)
+
+    def _set_lyrics_offset(self, off):
+        self.ly_offset = round(max(-60.0, min(60.0, off)), 2)
+        self.ly_off_lbl.setText('%+.1f s' % self.ly_offset if abs(self.ly_offset) >= 0.05 else '0.0 s')
+        if 0 <= self.ly_cur < self.ly_list.count():
+            old = self.ly_list.item(self.ly_cur)
+            old.setFont(QFont())
+            old.setForeground(QColor(SOFT))
+        self.ly_cur = -1
+        if self.ly_rec is not None:
+            self.ly_rec['offset'] = self.ly_offset
+            self._cache_lyrics(self.ly_rec)
 
     def _paste_lyrics(self):
         if not self.song:
@@ -904,7 +968,7 @@ class MainWindow(QMainWindow):
     def _tick_lyrics(self, pos):
         if not self.ly_synced or not self.ly_times:
             return
-        i = bisect.bisect_right(self.ly_times, pos + 0.15) - 1
+        i = bisect.bisect_right(self.ly_times, pos - self.ly_offset + 0.15) - 1
         if i == self.ly_cur:
             return
         bold = QFont()
