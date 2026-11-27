@@ -1,4 +1,6 @@
 # Intel Macs: PyTorch 2.2 is the last version published for them, and it needs NumPy 1.x.
+# Demucs 4.1 needs sphn, which has no Intel Mac build; 4.0.1 separates just as well.
 torch==2.2.2
 torchaudio==2.2.2
 numpy<2
+demucs==4.0.1
