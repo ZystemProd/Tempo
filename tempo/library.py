@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS collection_songs(
 """
 
 EDITABLE = {'title', 'artist', 'album', 'duration', 'favorite', 'bpm', 'key', 'tags', 'notes',
-            'speed', 'semis', 'loops', 'stems', 'lyrics', 'last_played', 'play_count', 'path'}
+            'speed', 'semis', 'loops', 'stems', 'lyrics', 'analysis', 'last_played', 'play_count', 'path'}
 
 
 class Library:
@@ -41,6 +41,8 @@ class Library:
         cols = {r[1] for r in self.db.execute('PRAGMA table_info(songs)')}
         if 'lyrics' not in cols:
             self.db.execute("ALTER TABLE songs ADD COLUMN lyrics TEXT DEFAULT ''")
+        if 'analysis' not in cols:
+            self.db.execute("ALTER TABLE songs ADD COLUMN analysis TEXT DEFAULT ''")
         self.db.commit()
 
     # ---------- songs ----------

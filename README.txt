@@ -52,9 +52,17 @@ Player (double-click a song)
     details to see the resulting tempo.
   - Pitch: transpose in semitones; "Fine tune" (cents) matches a recording to
     a piano that isn't at A440.
+  - Tempo finds each song's BPM, beats and key by itself (in the background,
+    a few seconds per song). They appear in the BPM and Key columns; you can
+    correct them under Edit details. If the tempo is shown at half or double
+    speed, type the right BPM there and the click follows.
+  - Click: a metronome click on every beat that stays in time at any speed
+    (the first beat of each bar is higher).
+  - Count-in: one bar of clicks before the music starts, either only when you
+    press play or also before every loop repeat.
   - Loop: Set A / Set B, or drag across the waveform.
   - Each song opens at 100% speed, original pitch and no loop.
-  - "Save practice track..." writes MP3/WAV/M4A/FLAC at the current speed and
+  - "Save track..." writes MP3/WAV/M4A/FLAC at the current speed and
     pitch, for the whole song or just the loop. Handy for students.
 
 Lyrics (sidebar on the right, toggle with the "Lyrics" button)

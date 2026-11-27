@@ -92,6 +92,82 @@ class Player:
         self.play_pos = 0.0
         self.bypass = True
         self.error = ''
+        # metronome: beat positions in source samples, bar start index, click sounds
+        self.beats = np.zeros(0)
+        self.downbeat = 0
+        self.beat_period = 0.0
+        self.click_on = False
+        self.click_level = 0.6
+        self.countin_mode = 0  # 0 off, 1 before playing, 2 before playing and before every loop repeat
+        self.loop_bounds = None
+        self.ci_left = 0
+        self.ci_elapsed = 0
+        self.ci_marks = []
+        self.tail = np.zeros(0, dtype=np.float32)
+        t = np.arange(int(0.035 * self.sr)) / self.sr
+        env = np.exp(-t * 90.0) * np.minimum(1.0, t / 0.001)
+        self.click_hi = (0.7 * np.sin(2 * np.pi * 1760 * t) * env).astype(np.float32)
+        self.click_lo = (0.5 * np.sin(2 * np.pi * 1245 * t) * env).astype(np.float32)
+
+    # ---- metronome ----
+    def set_beats(self, times, downbeat=0, bpm=None):
+        with self.lock:
+            self.beats = np.asarray(times, dtype=np.float64) * self.sr
+            self.downbeat = int(downbeat)
+            if len(self.beats) > 2:
+                self.beat_period = float(np.median(np.diff(self.beats)))
+            elif bpm:
+                self.beat_period = 60.0 / bpm * self.sr
+            else:
+                self.beat_period = 0.0
+
+    def set_click(self, on):
+        with self.lock:
+            self.click_on = bool(on)
+
+    def set_countin(self, mode):
+        with self.lock:
+            self.countin_mode = int(mode)
+            self._apply_loop()
+
+    def _click(self, out, off, accent):
+        c = self.click_hi if accent else self.click_lo
+        c = c * np.float32(self.click_level)
+        k = max(0, min(len(c), len(out) - off))
+        out[off:off + k] += c[:k, None]
+        rest = c[k:]
+        if len(rest):
+            if len(self.tail) < len(rest):
+                self.tail = np.pad(self.tail, (0, len(rest) - len(self.tail)))
+            self.tail[:len(rest)] += rest
+
+    def _beat_clicks(self, out, pos, m, p0):
+        """Clicks for beats heard in out[pos:pos+m], which plays source samples from p0 on."""
+        if not len(self.beats):
+            return
+        p1 = p0 + m * self.speed
+        ranges = [(p0, p1, 0.0)]
+        lp = self.src.loop
+        if lp and p1 > lp[1]:
+            A, B = lp
+            ranges = [(p0, B, 0.0), (A, A + (p1 - B), (B - p0))]
+        for a, b, base in ranges:
+            i0, i1 = np.searchsorted(self.beats, [a, b])
+            for i in range(i0, i1):
+                off = pos + int((base + self.beats[i] - a) / self.speed)
+                if pos <= off < pos + m:
+                    self._click(out, off, (i - self.downbeat) % 4 == 0)
+
+    def _start_countin(self):
+        if self.beat_period <= 0:
+            return
+        step = self.beat_period / self.speed
+        self.ci_marks = [(int(round(i * step)), i == 0) for i in range(4)]
+        self.ci_left = int(round(4 * step))
+        self.ci_elapsed = 0
+
+    def counting_in(self):
+        return self.ci_left > 0
 
     # ---- stream ----
     def _ensure_stream(self):
@@ -102,26 +178,59 @@ class Player:
 
     def _cb(self, outdata, frames, t, status):
         with self.lock:
+            out = np.zeros((frames, 2), dtype=np.float32)
+            if len(self.tail):
+                k = min(frames, len(self.tail))
+                out[:k] += self.tail[:k, None]
+                self.tail = self.tail[k:]
             if not self.playing or self.src.n == 0:
-                outdata.fill(0)
+                outdata[:] = out * np.float32(self.volume)
                 return
+            pos = 0
             try:
-                y = self.src.read(frames) if self.bypass else self.engine.render(frames, self.src.read)
-                outdata[:] = y * np.float32(self.volume)
+                while pos < frames and self.playing:
+                    if self.ci_left > 0:  # count-in: clicks only
+                        n = min(frames - pos, self.ci_left)
+                        for off, acc in self.ci_marks:
+                            if self.ci_elapsed <= off < self.ci_elapsed + n:
+                                self._click(out, pos + off - self.ci_elapsed, acc)
+                        self.ci_elapsed += n
+                        self.ci_left -= n
+                        pos += n
+                        continue
+                    m = frames - pos
+                    lb = self.loop_bounds
+                    stop_at_b = bool(lb and self.countin_mode == 2 and self.src.loop is None)
+                    if stop_at_b:
+                        need = max(0, int(np.ceil((lb[1] - self.play_pos) / self.speed)))
+                        stop_at_b = need < m
+                        if stop_at_b:
+                            m = need
+                    if m > 0:
+                        y = self.src.read(m) if self.bypass else self.engine.render(m, self.src.read)
+                        if stop_at_b:  # short fade before jumping back to A
+                            f = min(m, 128)
+                            y[m - f:] *= np.linspace(1, 0, f, dtype=np.float32)[:, None]
+                        out[pos:pos + m] += y
+                        p0 = self.play_pos
+                        if self.click_on:
+                            self._beat_clicks(out, pos, m, p0)
+                        self.play_pos += m * self.speed
+                        lp = self.src.loop
+                        if lp and self.play_pos >= lp[1]:
+                            self.play_pos = lp[0] + (self.play_pos - lp[1]) % (lp[1] - lp[0])
+                        pos += m
+                    if stop_at_b:
+                        self._seek_samples(lb[0])
+                        self._start_countin()
+                        continue
+                    if not self.src.loop and not lb and self.play_pos >= self.src.n:
+                        self.playing = False
+                        self.ended = True
             except Exception as e:
-                outdata.fill(0)
                 self.error = str(e)
                 self.playing = False
-                return
-            self.play_pos += frames * self.speed
-            lp = self.src.loop
-            if lp:
-                A, B = lp
-                if self.play_pos >= B:
-                    self.play_pos = A + (self.play_pos - B) % (B - A)
-            elif self.play_pos >= self.src.n:
-                self.playing = False
-                self.ended = True
+            outdata[:] = out * np.float32(self.volume)
 
     def close(self):
         if self.stream is not None:
@@ -166,6 +275,10 @@ class Player:
         self.play_pos = float(p)
         self.engine.reset()
 
+    def _apply_loop(self):
+        lb = self.loop_bounds
+        self.src.loop = lb if (lb and self.countin_mode != 2) else None
+
     def seek(self, seconds):
         with self.lock:
             self.ended = False
@@ -175,14 +288,18 @@ class Player:
         self._ensure_stream()
         with self.lock:
             if self.ended or self.play_pos >= self.src.n - 1:
-                self._seek_samples(self.src.loop[0] if self.src.loop else 0)
+                self._seek_samples(self.loop_bounds[0] if self.loop_bounds else 0)
             self.ended = False
             self.error = ''
+            self.ci_left = 0
+            if self.countin_mode >= 1:
+                self._start_countin()
             self.playing = True
 
     def pause(self):
         with self.lock:
             self.playing = False
+            self.ci_left = 0
 
     def _update_bypass(self):
         b = abs(self.speed - 1.0) < 1e-9 and abs(self.semis) < 1e-9
@@ -206,10 +323,12 @@ class Player:
         """a, b in seconds, or None to turn the loop off."""
         with self.lock:
             if a is None or b is None or b - a < 0.05:
-                self.src.loop = None
+                self.loop_bounds = None
+                self._apply_loop()
                 return
             A, B = int(a * self.sr), int(b * self.sr)
-            self.src.loop = (A, B)
+            self.loop_bounds = (A, B)
+            self._apply_loop()
             if self.play_pos >= B or self.play_pos < A - self.sr * 0.05:
                 self._seek_samples(A)
 

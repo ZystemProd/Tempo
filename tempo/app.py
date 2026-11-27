@@ -1,5 +1,6 @@
 """Tempo desktop: song library + high-quality practice player."""
 import bisect
+import heapq
 import importlib.util
 import json
 import os
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QBoxLayout, QChe
                                QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStyleFactory,
                                QTableView, QTabWidget, QToolBar, QVBoxLayout, QWidget)
 
-from . import __version__, addons, audio, lyrics, updater
+from . import __version__, addons, analysis, audio, lyrics, updater
 from .library import Library
 from .player import Player, render_offline
 from .stretch import engine_problem
@@ -170,6 +171,7 @@ class Bus(QObject):
     lyrics = Signal(int, object, str)
     update_info = Signal(object, str, bool)
     update_done = Signal(str, str)
+    analyzed = Signal(int, object, str)
     addon_progress = Signal(float, str)
     addon_done = Signal(str)
 
@@ -422,6 +424,44 @@ class InfoDialog(QDialog):
                     bpm=self.bpm.value() or None, key=self.key.text().strip(), tags=tags)
 
 
+# ---------------------------------------------------------------- background analysis
+class Analyzer:
+    """Finds BPM, beats and key one song at a time in a background thread.
+    The song you open goes to the front of the queue."""
+
+    def __init__(self, bus):
+        self.bus = bus
+        self.q = []
+        self.pending = set()
+        self.seq = 0
+        self.cv = threading.Condition()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def add(self, sid, path, urgent=False):
+        with self.cv:
+            if sid in self.pending and not urgent:
+                return
+            self.seq += 1
+            heapq.heappush(self.q, (0 if urgent else 1, self.seq, sid, path))
+            self.pending.add(sid)
+            self.cv.notify()
+
+    def _run(self):
+        while True:
+            with self.cv:
+                while not self.q:
+                    self.cv.wait()
+                _, _, sid, path = heapq.heappop(self.q)
+                if sid not in self.pending:
+                    continue
+                self.pending.discard(sid)
+            try:
+                self.bus.analyzed.emit(sid, analysis.analyze(path), '')
+            except Exception as e:
+                self.bus.analyzed.emit(sid, None, str(e) or type(e).__name__)
+            time.sleep(0.05)
+
+
 # ---------------------------------------------------------------- main window
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -442,7 +482,11 @@ class MainWindow(QMainWindow):
         self.ly_lines, self.ly_times, self.ly_synced, self.ly_cur = [], [], False, -1
         self.ly_results, self.ly_token, self.ly_song = [], 0, None
         self.ly_rec, self.ly_offset = None, 0.0
-        self.bus.added.connect(lambda n: (self.refresh(), self.status('Added %d song%s' % (n, '' if n == 1 else 's'))))
+        self.bus.added.connect(lambda n: (self.refresh(), self.status('Added %d song%s' % (n, '' if n == 1 else 's')),
+                                          self._queue_analysis()))
+        self.bus.analyzed.connect(self._on_analyzed)
+        self.analyzer = Analyzer(self.bus)
+        self._refresh_later = QTimer(self, singleShot=True, interval=600, timeout=self.refresh)
         self.player = Player()
         self.song = None
         self.main_audio = None
@@ -475,6 +519,9 @@ class MainWindow(QMainWindow):
                     '  (Rubber Band unavailable: %s)' % engine_problem()))
         self.engine_lbl.setText(self.player.engine_name)
         self.setWindowTitle('%s %s' % (APP, __version__))
+        self.click_btn.setChecked(self.settings.value('click', 'false') in (True, 'true'))
+        self._set_countin(int(self.settings.value('countin', 0) or 0))
+        QTimer.singleShot(2500, self._queue_analysis)
         last = float(self.settings.value('update_check', 0) or 0)
         if time.time() - last > 20 * 3600:
             QTimer.singleShot(4000, lambda: self.check_updates(manual=False))
@@ -650,13 +697,30 @@ class MainWindow(QMainWindow):
             tr.addWidget(x)
         tr.addSpacing(8)
         tr.addWidget(self.time_lbl)
+        tr.addSpacing(12)
+        self.click_btn = QPushButton('Click', checkable=True)
+        self.click_btn.setToolTip('Metronome click on every beat, in time at any speed (bar starts are higher)')
+        self.click_btn.toggled.connect(self._toggle_click)
+        tr.addWidget(self.click_btn)
+        self.countin_btn = QPushButton('Count-in', checkable=True)
+        self.countin_btn.setToolTip('One bar of clicks before the music starts')
+        m = QMenu(self.countin_btn)
+        self.countin_actions = []
+        for i, label in enumerate(('Off', 'Before playing', 'Before playing and every loop repeat')):
+            act = m.addAction(label)
+            act.setCheckable(True)
+            act.triggered.connect(lambda _=False, i=i: self._set_countin(i))
+            self.countin_actions.append(act)
+        self.countin_btn.setMenu(m)
+        tr.addWidget(self.countin_btn)
         tr.addStretch(1)
         tr.addWidget(QLabel('Volume', objectName='soft'))
         self.vol = QSlider(Qt.Horizontal, minimum=0, maximum=100, value=90)
         self.vol.setFixedWidth(130)
         self.vol.valueChanged.connect(lambda x: setattr(self.player, 'volume', x / 100))
         tr.addWidget(self.vol)
-        self.export_btn = QPushButton('Save practice track…', clicked=self.export)
+        self.export_btn = QPushButton('Save track…', clicked=self.export)
+        self.export_btn.setToolTip('Save the song at this speed and pitch as an audio file')
         tr.addSpacing(10)
         tr.addWidget(self.export_btn)
         v.addLayout(tr)
@@ -1099,6 +1163,68 @@ class MainWindow(QMainWindow):
             self.close()
             updater.restart()
 
+    # ---------- beat, tempo and key ----------
+    def _analysis_of(self, song):
+        try:
+            a = json.loads(song.get('analysis') or '{}')
+        except ValueError:
+            a = {}
+        return a if a.get('version') == analysis.VERSION else None
+
+    def _queue_analysis(self):
+        for r in self.lib.songs('all'):
+            if not self._analysis_of(r) and os.path.exists(r['path']):
+                self.analyzer.add(r['id'], r['path'])
+
+    def _apply_analysis(self):
+        s = self.song
+        a = self._analysis_of(s) if s else None
+        if not a:
+            self.player.set_beats([], 0, s.get('bpm') if s else None)
+            if s:
+                self.analyzer.add(s['id'], s['path'], urgent=True)
+                self.status('Finding the beat and key of “%s”…' % (s['title'] or 'this song'))
+            return
+        beats, down = analysis.beats_for(a, s.get('bpm'))
+        self.player.set_beats(beats, down, s.get('bpm') or a.get('bpm'))
+
+    def _on_analyzed(self, sid, res, err):
+        if not res:
+            if self.song and self.song['id'] == sid:
+                self.status('Could not find the beat: ' + err)
+            return
+        s = self.lib.get(sid)
+        if not s:
+            return
+        fields = {'analysis': json.dumps(res)}
+        if not s['bpm'] and res.get('bpm'):
+            fields['bpm'] = res['bpm']
+        if not (s['key'] or '').strip() and res.get('key'):
+            fields['key'] = res['key']
+        self.lib.update(sid, **fields)
+        if self.song and self.song['id'] == sid:
+            self.song = self.lib.get(sid)
+            self._apply_analysis()
+            self._update_title()
+            self.status('“%s”: %s, %g BPM' % (self.song['title'] or 'Song', self.song['key'] or '?', self.song['bpm'] or 0))
+        self._refresh_later.start()
+
+    def _toggle_click(self, on):
+        self.player.set_click(on)
+        self.settings.setValue('click', 'true' if on else 'false')
+        if on and not len(self.player.beats) and self.song:
+            self.status('Still finding the beat… the click starts as soon as it is found.')
+
+    def _set_countin(self, mode):
+        self.player.set_countin(mode)
+        self.settings.setValue('countin', mode)
+        for i, act in enumerate(self.countin_actions):
+            act.setChecked(i == mode)
+        self.countin_btn.setChecked(mode > 0)
+        self.countin_btn.setToolTip(('One bar of clicks before the music starts (off)',
+                                     'One bar of clicks before playing',
+                                     'One bar of clicks before playing and before every loop repeat')[mode])
+
     # ---------- status ----------
     def status(self, text):
         self.statusBar().showMessage(text, 8000)
@@ -1231,6 +1357,7 @@ class MainWindow(QMainWindow):
             if self.song and self.song['id'] == sid:
                 self.song = self.lib.get(sid)
                 self._update_title()
+                self._apply_analysis()
             self.refresh()
 
     def remove_songs(self, ids):
@@ -1334,6 +1461,7 @@ class MainWindow(QMainWindow):
         self._build_stems_ui()
         if self.ly_song != s['id']:
             self._lyrics_for_song()
+        self._apply_analysis()
         self.lib.mark_played(s['id'])
         self.refresh()
         resume, self._resume_after = self._resume_after, None
@@ -1447,7 +1575,10 @@ class MainWindow(QMainWindow):
         self.last_pos = pos
         self.wave.set_pos(pos)
         self._tick_lyrics(pos)
-        self.time_lbl.setText('%s / %s' % (fmt(pos), fmt(p.duration)))
+        if p.counting_in():
+            self.time_lbl.setText('Count-in…')
+        else:
+            self.time_lbl.setText('%s / %s' % (fmt(pos), fmt(p.duration)))
         if self._shown_playing != p.playing:
             self._update_player_ui()
 
