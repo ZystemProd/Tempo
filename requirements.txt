@@ -4,3 +4,4 @@ sounddevice>=0.4.6
 imageio-ffmpeg>=0.5
 mutagen>=1.47
 certifi>=2024.2
+demucs>=4.0.1

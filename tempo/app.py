@@ -1470,39 +1470,45 @@ class MainWindow(QMainWindow):
         self._build_stems_ui()
 
     def split_stems(self):
-        if updater.FROZEN:
-            QMessageBox.information(self, 'Instrument splitting',
-                                    'Instrument splitting needs the Python version of Tempo, because the '
-                                    'separation model is too large to include in the app. See the README on '
-                                    + updater.RELEASES.rsplit('/', 1)[0])
-            return
-        if importlib.util.find_spec('demucs') is None:
-            QMessageBox.information(self, 'Instrument splitting is not installed',
-                                    'Instrument splitting needs an extra download (about 1–2 GB).\n\n'
-                                    'Close Tempo, then double-click:\n'
-                                    '  • Windows: “Install instrument splitting (Windows).bat”\n'
-                                    '  • Mac: “Install instrument splitting (Mac).command”\n\n'
-                                    'Both are in the Tempo folder.')
+        if not updater.FROZEN and importlib.util.find_spec('demucs') is None:
+            QMessageBox.information(self, 'Instrument splitting is missing',
+                                    'The separation engine is not installed. Close Tempo and run '
+                                    '“Install Tempo” again, then try once more.')
             return
         if self.stem_proc:
             return
         sid = self.song['id']
         out = self._stem_dir(sid)
         model = self.stem_model.currentData()
+        prog = os.path.join(data_dir(), 'stems-progress-%d.txt' % sid)
+        try:
+            os.remove(prog)
+        except OSError:
+            pass
         proc = QProcess(self)
         proc.setProgram(sys.executable)
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        proc.setWorkingDirectory(root)
-        proc.setArguments(['-m', 'tempo.stems_worker', self.song['path'], out, model])
-        proc.setProcessChannelMode(QProcess.MergedChannels)
-        self._stem_buf = ''
+        worker = ['--stems-worker', self.song['path'], out, model, prog]
+        if updater.FROZEN:
+            proc.setArguments(worker)
+        else:
+            proc.setWorkingDirectory(root)
+            proc.setArguments([os.path.join(root, 'run_tempo.py')] + worker)
+        proc.setStandardOutputFile(QProcess.nullDevice())
+        proc.setStandardErrorFile(QProcess.nullDevice())
         self._stem_sid = sid
         self._stem_result = None
+        self._stem_off = 0
 
         def read():
-            self._stem_buf += bytes(proc.readAllStandardOutput()).decode('utf-8', 'replace')
-            *lines, self._stem_buf = self._stem_buf.replace('\r', '\n').split('\n')
-            for line in lines:
+            try:
+                with open(prog, 'r', encoding='utf-8') as f:
+                    f.seek(self._stem_off)
+                    chunk = f.read()
+                    self._stem_off = f.tell()
+            except OSError:
+                return
+            for line in chunk.splitlines():
                 line = line.strip()
                 if line.startswith('PROGRESS'):
                     self._stem_msg('Separating… %s%%' % line.split()[1])
@@ -1514,6 +1520,8 @@ class MainWindow(QMainWindow):
                     self._stem_result = line
 
         def done(code, _status):
+            poll.stop()
+            read()
             self.stem_proc = None
             res = self._stem_result
             if isinstance(res, list):
@@ -1525,8 +1533,13 @@ class MainWindow(QMainWindow):
                     self.open_song(sid, autoplay=False)
             else:
                 self._stem_msg('Separation failed. %s' % (res or 'Exit code %d' % code))
+            try:
+                os.remove(prog)
+            except OSError:
+                pass
 
-        proc.readyReadStandardOutput.connect(read)
+        poll = QTimer(self, interval=400, timeout=read)
+        poll.start()
         proc.finished.connect(done)
         self.stem_proc = proc
         self._stem_msg('Starting…')

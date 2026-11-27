@@ -3,7 +3,7 @@ TEMPO - practice player and song library
 
 Slow songs down or speed them up without changing the pitch, loop passages,
 transpose, and organise your songs into
-collections (per student, book, exam, concert...). Optional: split a song into
+collections (per student, book, exam, concert...). Split a song into
 instruments (vocals, drums, bass, piano...) and mute or solo any of them.
 
 Speed changes use the Rubber Band R3 engine, the same library professional
@@ -72,16 +72,14 @@ Keyboard: Space play/pause, Left/Right 5 s, [ and ] speed -/+5%,
 A and B set loop points, L loop on/off, Ctrl/Cmd+F search.
 
 
-SPLITTING INSTRUMENTS (optional)
---------------------------------
-1. Close Tempo, then run "Install instrument splitting (Windows).bat" or
-   "Install instrument splitting (Mac).command" (about 1-2 GB download).
-2. Open a song and click "Split into instruments" in the Instruments panel.
-   "4 parts" gives vocals, drums, bass, other. "6 parts" adds piano and guitar
-   (piano separation is the least clean of the six).
-3. It takes a few minutes per song on a normal computer; the first time it also
-   downloads the separation model. The result is saved, so each song is only
-   split once.
+SPLITTING INSTRUMENTS
+---------------------
+Included in the install. Open a song and click "Split into instruments" in the
+Instruments panel. "4 parts" gives vocals, drums, bass, other. "6 parts" adds
+piano and guitar (piano separation is the least clean of the six).
+It takes a few minutes per song on a normal computer; the very first time it
+also downloads the separation model (about 80-160 MB). The result is saved, so
+each song is only split once.
 Windows with an NVIDIA graphics card: splitting gets much faster with the CUDA
 version of PyTorch. Get the pip command from pytorch.org and run it with
 .venv\Scripts\python.exe -m pip ...

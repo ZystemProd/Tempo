@@ -1,10 +1,18 @@
-"""Start Tempo. Errors are written to tempo-log.txt next to this file."""
+"""Start Tempo. Errors are written to tempo-log.txt.
+
+`--stems-worker ...` runs instrument separation instead of the window (used by Tempo itself).
+"""
 import os
 import sys
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+if len(sys.argv) > 1 and sys.argv[1] == '--stems-worker':
+    from tempo.stems_worker import run
+    sys.exit(run(sys.argv[2:]))
+
 if sys.stderr is None or sys.stdout is None:  # pythonw / the stand-alone app have no console
     LOG_DIR = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else HERE
     try:

@@ -1,7 +1,8 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 echo ""
-echo " Installing Tempo. This takes a few minutes the first time."
+echo " Installing Tempo, including instrument splitting."
+echo " The first time this downloads about 1-2 GB and takes 5-15 minutes."
 echo ""
 PY=""
 for c in python3.13 python3.12 python3.14 \

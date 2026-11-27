@@ -3,7 +3,8 @@ setlocal
 cd /d "%~dp0"
 title Install Tempo
 echo.
-echo  Installing Tempo. This takes a few minutes the first time.
+echo  Installing Tempo, including instrument splitting.
+echo  The first time this downloads about 1-2 GB and takes 5-15 minutes.
 echo.
 set "PY="
 for %%V in (3.13 3.12 3.14) do (

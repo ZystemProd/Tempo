@@ -12,7 +12,9 @@ Get the newest version from **[Releases](../../releases/latest)**:
 |---|---|
 | `Tempo-Windows.zip` | Windows app. Unzip and run `Tempo.exe`. |
 | `Tempo-Mac.zip` | Mac app (Apple Silicon). Unzip, then right-click `Tempo.app` > Open the first time. |
-| `Tempo-source.zip` | Python version for any Windows or Mac computer, including instrument splitting. See `README.txt` inside. |
+| `Tempo-source.zip` | Python version for any Windows or Mac computer (also Intel Macs). See `README.txt` inside. |
+
+All three include instrument splitting.
 
 Tempo checks for new versions itself: click **Updates** in the toolbar.
 

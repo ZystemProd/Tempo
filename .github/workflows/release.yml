@@ -18,9 +18,14 @@ jobs:
         include:
           - os: windows-latest
             asset: Tempo-Windows.zip
+            exe: dist/Tempo/Tempo.exe
           - os: macos-latest
             asset: Tempo-Mac.zip
+            exe: dist/Tempo.app/Contents/MacOS/Tempo
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,11 +37,32 @@ jobs:
           python -m pip install -r requirements.txt pylibrb pyinstaller
       - name: Check the studio engine
         run: python -c "from tempo.stretch import rubberband_available as ok, engine_problem as why; print('Rubber Band R3 ready:', ok(), why())"
+      - name: Make a test song
+        run: |
+          python -c "
+          import numpy as np; from tempo.audio import write_wav
+          sr=44100; t=np.arange(sr*8)/sr
+          x=0.3*np.sin(2*np.pi*220*t)+0.2*np.sin(2*np.pi*660*t)*(t%0.5<0.1)+0.05*np.random.randn(len(t))
+          write_wav('test-song.wav', np.stack([x,x],1).astype('float32'), sr)"
+      - name: Test instrument splitting (Python)
+        run: |
+          python run_tempo.py --stems-worker test-song.wav out-py htdemucs progress-py.txt
+          tail -3 progress-py.txt
+          ls out-py
+          test -f out-py/vocals.wav && test -f out-py/drums.wav
       - name: Build app
         run: >
           pyinstaller --noconfirm --windowed --name Tempo
           --collect-all imageio_ffmpeg --collect-all pylibrb --collect-data certifi
+          --collect-all demucs --collect-all dora --collect-all julius --collect-all openunmix
+          --collect-all lameenc --collect-data omegaconf --collect-submodules torchaudio
           run_tempo.py
+      - name: Test instrument splitting (built app)
+        run: |
+          "${{ matrix.exe }}" --stems-worker test-song.wav out-app htdemucs progress-app.txt || true
+          cat progress-app.txt || true
+          ls out-app
+          test -f out-app/vocals.wav && test -f out-app/drums.wav
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
