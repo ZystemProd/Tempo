@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QBoxLayout, QChe
                                QTableView, QTabWidget, QToolBar, QVBoxLayout, QWidget)
 
 from . import __version__, addons, analysis, audio, lyrics, updater
+from .sync import SyncFolder, resolve_root
 from .library import Library
 from .player import Player, render_offline
 from .stretch import engine_problem
@@ -143,6 +144,13 @@ def make_icon(kind, color, size=48):
     return QIcon(pm)
 
 
+def _size(n):
+    for unit in ('bytes', 'KB', 'MB', 'GB'):
+        if n < 1024 or unit == 'GB':
+            return ('%d %s' % (n, unit)) if unit == 'bytes' else ('%.1f %s' % (n, unit))
+        n /= 1024.0
+
+
 def data_dir():
     d = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
     os.makedirs(d, exist_ok=True)
@@ -172,6 +180,9 @@ class Bus(QObject):
     update_info = Signal(object, str, bool)
     update_done = Signal(str, str)
     analyzed = Signal(int, object, str)
+    synced = Signal(int, str)
+    joined = Signal(str)
+    join_progress = Signal(int, int, str)
     addon_progress = Signal(float, str)
     addon_done = Signal(str)
 
@@ -385,6 +396,70 @@ class Sidebar(QListWidget):
             e.acceptProposedAction()
 
 
+class SyncDialog(QDialog):
+    """Explains sync and lets you pick, change or turn off the sync folder."""
+
+    def __init__(self, parent, root):
+        super().__init__(parent)
+        self.setWindowTitle('Sync between computers')
+        self.setMinimumWidth(520)
+        self.action = None
+        v = QVBoxLayout(self)
+        v.setSpacing(10)
+        intro = QLabel('Keep the same library on all your computers. Choose a folder that Google Drive, '
+                       'Dropbox, iCloud Drive or OneDrive keeps in sync. Tempo keeps your songs, collections, '
+                       'song details, favourites, lyrics and separated instruments there.')
+        intro.setWordWrap(True)
+        v.addWidget(intro)
+        state = QLabel(('<b>Sync is on.</b><br>' + root.replace('&', '&amp;').replace('<', '&lt;'))
+                       if root else '<b>Sync is off.</b> Your library is only on this computer.')
+        state.setWordWrap(True)
+        state.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        v.addWidget(state)
+        tips = QLabel('Tips\n'
+                      '• Google Drive: in the Drive app\'s settings choose “Mirror files”, or right-click the '
+                      'Tempo Library folder and make it available offline, so songs open instantly.\n'
+                      '• On your other computer, open Tempo, click Sync and choose the same folder.\n'
+                      '• If the same song is changed on two computers at once, the latest change is kept.')
+        tips.setObjectName('soft')
+        tips.setWordWrap(True)
+        v.addWidget(tips)
+        row = QHBoxLayout()
+        pick = QPushButton('Change folder…' if root else 'Choose sync folder…', objectName='accent')
+        pick.clicked.connect(lambda: self._done('choose'))
+        row.addWidget(pick)
+        if root:
+            off = QPushButton('Turn off sync')
+            off.clicked.connect(lambda: self._done('off'))
+            row.addWidget(off)
+        row.addStretch(1)
+        close = QPushButton('Close')
+        close.clicked.connect(self.reject)
+        row.addWidget(close)
+        v.addLayout(row)
+
+    def _done(self, action):
+        self.action = action
+        self.accept()
+
+
+def cloud_start_dir():
+    """Where the folder picker opens: the Google Drive folder if the Drive app is installed."""
+    home = os.path.expanduser('~')
+    if sys.platform == 'darwin':
+        cs = os.path.join(home, 'Library', 'CloudStorage')
+        if os.path.isdir(cs):
+            for name in sorted(os.listdir(cs)):
+                if name.startswith('GoogleDrive'):
+                    return os.path.join(cs, name)
+            return cs
+    elif sys.platform == 'win32':
+        for d in ('G:\\My Drive', 'G:\\Min enhet', 'G:\\'):
+            if os.path.isdir(d):
+                return d
+    return home
+
+
 class InfoDialog(QDialog):
     def __init__(self, parent, song, all_tags):
         super().__init__(parent)
@@ -468,7 +543,21 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP)
         self.settings = QSettings(APP, APP)
-        self.lib = Library(os.path.join(data_dir(), 'library.sqlite'))
+        self.db_path = os.path.join(data_dir(), 'library.sqlite')
+        self.sync = None
+        root = self.settings.value('sync_folder', '') or ''
+        self._sync_missing = False
+        if root:
+            if os.path.isdir(root):
+                try:
+                    self.sync = SyncFolder(root)
+                except OSError:
+                    self._sync_missing = True
+            else:
+                self._sync_missing = True
+        self.lib = Library(self.db_path, self.sync)
+        self._sync_busy = False
+        self._last_sync = None
         self.bus = Bus()
         self.bus.loaded.connect(self._on_loaded)
         self.bus.load_failed.connect(self._on_load_failed)
@@ -485,6 +574,9 @@ class MainWindow(QMainWindow):
         self.bus.added.connect(lambda n: (self.refresh(), self.status('Added %d song%s' % (n, '' if n == 1 else 's')),
                                           self._queue_analysis()))
         self.bus.analyzed.connect(self._on_analyzed)
+        self.bus.synced.connect(self._on_synced)
+        self.bus.joined.connect(self._on_joined)
+        self.bus.join_progress.connect(self._on_join_progress)
         self.analyzer = Analyzer(self.bus)
         self._refresh_later = QTimer(self, singleShot=True, interval=600, timeout=self.refresh)
         self.player = Player()
@@ -522,6 +614,12 @@ class MainWindow(QMainWindow):
         self.click_btn.setChecked(self.settings.value('click', 'false') in (True, 'true'))
         self._set_countin(int(self.settings.value('countin', 0) or 0))
         QTimer.singleShot(2500, self._queue_analysis)
+        self._update_sync_btn()
+        self.sync_timer = QTimer(self, interval=10000, timeout=self._poll_sync)
+        self.sync_timer.start()
+        QTimer.singleShot(1200, self._poll_sync)
+        if self._sync_missing:
+            self.status('Sync folder not found. Is Google Drive (or your sync app) running? Working offline for now.')
         last = float(self.settings.value('update_check', 0) or 0)
         if time.time() - last > 20 * 3600:
             QTimer.singleShot(4000, lambda: self.check_updates(manual=False))
@@ -553,6 +651,9 @@ class MainWindow(QMainWindow):
         self.ly_btn.setToolTip('Show or hide lyrics and instruments')
         self.ly_btn.toggled.connect(self._toggle_lyrics)
         tb.addWidget(self.ly_btn)
+        self.sync_btn = QPushButton('Sync')
+        self.sync_btn.clicked.connect(self.open_sync)
+        tb.addWidget(self.sync_btn)
         self.upd_btn = QPushButton('Updates')
         self.upd_btn.setToolTip('Tempo %s. Check for a newer version.' % __version__)
         self.upd_btn.clicked.connect(lambda: self.check_updates(manual=True))
@@ -1079,6 +1180,150 @@ class MainWindow(QMainWindow):
             if self.ly_follow.isChecked():
                 self.ly_list.scrollToItem(it, QAbstractItemView.PositionAtCenter)
 
+    # ---------- sync ----------
+    def _update_sync_btn(self):
+        if self._sync_missing:
+            self.sync_btn.setText('Sync ⚠')
+            self.sync_btn.setToolTip('The sync folder can\'t be found. Is Google Drive (or your sync app) running?')
+        elif self.sync:
+            self.sync_btn.setText('Synced')
+            when = time.strftime('%H:%M', time.localtime(self._last_sync)) if self._last_sync else 'not yet'
+            self.sync_btn.setToolTip('Syncing with %s\nLast checked: %s' % (self.sync.root, when))
+        else:
+            self.sync_btn.setText('Sync')
+            self.sync_btn.setToolTip('Keep your library on all your computers')
+
+    def open_sync(self):
+        root = self.sync.root if self.sync else ''
+        if self._sync_missing:
+            root = self.settings.value('sync_folder', '')
+        d = SyncDialog(self, root)
+        if not d.exec():
+            return
+        if d.action == 'off':
+            if QMessageBox.question(self, 'Turn off sync', 'Stop syncing this computer? Your songs and library '
+                                    'stay as they are; changes are just no longer shared.') == QMessageBox.Yes:
+                self.sync = None
+                self.lib.sync = None
+                self._sync_missing = False
+                self.settings.remove('sync_folder')
+                self._update_sync_btn()
+                self.status('Sync turned off')
+        elif d.action == 'choose':
+            chosen = QFileDialog.getExistingDirectory(self, 'Choose the folder to sync through '
+                                                      '(for example in Google Drive)', cloud_start_dir())
+            if chosen:
+                self._start_sync(chosen)
+
+    def _start_sync(self, chosen):
+        root = resolve_root(chosen)
+        existing = os.path.isdir(os.path.join(root, 'data', 'songs'))
+        try:
+            sync = SyncFolder(root)
+        except OSError as e:
+            QMessageBox.warning(self, 'Sync', 'Tempo can\'t use that folder:\n%s' % e)
+            return
+        probe = Library(self.db_path, sync)
+        n, size = probe.to_copy()
+        msg = ('Tempo will sync your library through:\n%s\n\n' % root)
+        if existing:
+            msg += 'This folder already has a Tempo library. It will be combined with the one on this computer.\n\n'
+        if n:
+            msg += ('%d song%s (%s) will be copied into the folder so your other computers can play them. '
+                    'The original files stay where they are.' % (n, '' if n == 1 else 's', _size(size)))
+        else:
+            msg += 'All your songs are already in the folder.'
+        if QMessageBox.question(self, 'Start syncing', msg) != QMessageBox.Yes:
+            return
+        dlg = QProgressDialog('Setting up sync…', None, 0, 100, self)
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
+        self._join_dlg = dlg
+        self._join_sync = sync
+        db, old = self.db_path, lambda row: os.path.join(data_dir(), 'stems', str(row['id']))
+
+        def work():
+            try:
+                lib = Library(db, sync)
+                lib.join(old, lambda i, total, title: self.bus.join_progress.emit(i, total, title))
+                self.bus.joined.emit('')
+            except Exception as e:
+                self.bus.joined.emit(str(e) or type(e).__name__)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_join_progress(self, i, total, title):
+        try:
+            self._join_dlg.setMaximum(max(1, total))
+            self._join_dlg.setValue(i)
+            self._join_dlg.setLabelText('Copying songs into the sync folder…\n%s' % title if title else 'Finishing…')
+        except Exception:
+            pass
+
+    def _on_joined(self, err):
+        try:
+            self._join_dlg.close()
+        except Exception:
+            pass
+        if err:
+            QMessageBox.warning(self, 'Sync', 'Setting up sync did not finish:\n%s\n\nYou can try again; '
+                                'nothing is lost.' % err)
+            return
+        self.sync = self._join_sync
+        self.lib.sync = self.sync
+        self._sync_missing = False
+        self.settings.setValue('sync_folder', self.sync.root)
+        self._last_sync = time.time()
+        self._update_sync_btn()
+        self.refresh_sidebar()
+        self.refresh()
+        if self.song:
+            self.song = self.lib.get(self.song['id']) or self.song
+        self.status('Sync is on. Your other computers can now choose the same folder.')
+
+    def _poll_sync(self):
+        if self._sync_missing and not self.sync:
+            root = self.settings.value('sync_folder', '')
+            if root and os.path.isdir(root):  # the drive came back
+                try:
+                    self.sync = SyncFolder(root)
+                    self.lib.sync = self.sync
+                    self._sync_missing = False
+                    self._update_sync_btn()
+                except OSError:
+                    pass
+        if not self.sync or self._sync_busy:
+            return
+        self._sync_busy = True
+        sync, db = self.sync, self.db_path
+
+        def work():
+            try:
+                lib = Library(db, sync)
+                self.bus.synced.emit(lib.apply_remote(*sync.changed()), '')
+            except Exception as e:
+                self.bus.synced.emit(0, str(e) or type(e).__name__)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_synced(self, n, err):
+        self._sync_busy = False
+        if err:
+            self.statusBar().showMessage('Sync problem: ' + err, 5000)
+            return
+        self._last_sync = time.time()
+        self._update_sync_btn()
+        if n:
+            self.refresh_sidebar()
+            self.refresh()
+            if self.song:
+                fresh = self.lib.get(self.song['id'])
+                if fresh:
+                    self.song = fresh
+                    self._update_title()
+            self._queue_analysis()
+
     # ---------- updates ----------
     def check_updates(self, manual=True):
         if self.update_rel and manual:
@@ -1387,8 +1632,12 @@ class MainWindow(QMainWindow):
         db_path = os.path.join(data_dir(), 'library.sqlite')
         target = self.view
 
+        sync = self.sync
+        if sync:
+            self.status('Adding songs and copying them into your sync folder…')
+
         def work():
-            lib = Library(db_path)
+            lib = Library(db_path, sync)
             ids = lib.add_paths(paths)
             if target.startswith('collection:') and ids:
                 lib.add_to_collection(int(target.split(':')[1]), ids)
@@ -1610,6 +1859,10 @@ class MainWindow(QMainWindow):
 
     # ---------- instruments (stems) ----------
     def _stem_dir(self, sid):
+        if self.sync:
+            s = self.lib.get(sid)
+            if s and s.get('uid'):
+                return self.sync.stems_dir(s['uid'])
         return os.path.join(data_dir(), 'stems', str(sid))
 
     def _clear_stems_ui(self):

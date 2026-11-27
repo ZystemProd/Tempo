@@ -96,9 +96,27 @@ version of PyTorch. Get the pip command from pytorch.org and run it with
 .venv\Scripts\python.exe -m pip ...
 
 
+SYNC BETWEEN COMPUTERS
+----------------------
+Keep the same library on several computers (Windows and Mac can be mixed):
+1. Install Google Drive for desktop (or Dropbox, iCloud Drive, OneDrive).
+   Google Drive: in its settings choose "Mirror files", or make the Tempo
+   Library folder available offline, so songs open instantly.
+2. In Tempo click "Sync" > "Choose sync folder..." and pick a folder in
+   your Drive, for example "My Drive". Tempo creates "Tempo Library" there
+   and copies your songs into it (your original files are not changed).
+3. On the other computer, click "Sync" and choose the same folder. Both
+   libraries are combined.
+Synced: songs, collections, favourites, song details (BPM, key, tags),
+lyrics and their timing, separated instruments, and the BPM/key analysis.
+Not synced (per computer): window layout, volume, Click/Count-in settings.
+Songs you add while sync is on are copied into the sync folder automatically.
+Changes from other computers appear within about 10 seconds. If the same
+song is changed on two computers at once, the latest change is kept.
+
 WHERE YOUR DATA IS
 ------------------
-Library and separated instruments:
+Without sync, the library and separated instruments are in:
   Windows: %APPDATA%\Tempo\Tempo
   Mac:     ~/Library/Application Support/Tempo/Tempo
 Back up that folder to keep your library. Your song files are never changed.
