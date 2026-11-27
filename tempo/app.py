@@ -537,7 +537,7 @@ class MainWindow(QMainWindow):
         self.vsplit = QSplitter(Qt.Vertical)
         hsplit.addWidget(self.vsplit)
         self.side_tabs = QTabWidget()
-        self.side_tabs.setMinimumWidth(270)
+        self.side_tabs.setMinimumWidth(240)
         self.side_tabs.addTab(self._build_lyrics(), 'Lyrics')
         inst = QWidget()
         self.stems_lay = QVBoxLayout(inst)
@@ -549,7 +549,8 @@ class MainWindow(QMainWindow):
         hsplit.addWidget(self.side_tabs)
         hsplit.setStretchFactor(1, 1)
         hsplit.setStretchFactor(2, 0)
-        hsplit.setSizes([200, 1000, 300])
+        scr_w = QApplication.primaryScreen().availableGeometry().width()
+        hsplit.setSizes([190, 1000, 300 if scr_w >= 1400 else 260])
         show = self.settings.value('lyrics', 'true') in (True, 'true')
         self.ly_btn.setChecked(show)
         self.ly_panel.setVisible(show)
@@ -572,7 +573,7 @@ class MainWindow(QMainWindow):
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(QHeaderView.Interactive)
         h.setStretchLastSection(False)
-        for c, w in enumerate([34, 300, 160, 64, 54, 80, 160, 100]):
+        for c, w in enumerate([34, 300, 130, 64, 50, 64, 110, 96]):
             self.table.setColumnWidth(c, w)
         h.setSectionResizeMode(1, QHeaderView.Stretch)
         h.setMinimumSectionSize(30)
@@ -676,7 +677,7 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj, ev):
         if obj is getattr(self, '_player_w', None) and ev.type() == ev.Type.Resize:
-            want = QBoxLayout.TopToBottom if obj.width() < 700 else QBoxLayout.LeftToRight
+            want = QBoxLayout.TopToBottom if obj.width() < 600 else QBoxLayout.LeftToRight
             if self.ctl_row.direction() != want:
                 self.ctl_row.setDirection(want)
         return super().eventFilter(obj, ev)
@@ -757,9 +758,13 @@ class MainWindow(QMainWindow):
         self.toa_btn = QPushButton('To A', clicked=lambda: self.seek(self.loop_a or 0))
         self.toa_btn.setToolTip('Back to the start of the loop')
         clr = QPushButton('Clear', clicked=lambda: self.set_loop(None, None, False))
-        for x in (self.a_btn, self.b_btn, self.loop_btn, self.toa_btn, clr):
-            r.addWidget(x)
+        for x in (self.a_btn, self.b_btn):
+            r.addWidget(x, 1)
+        r2 = QHBoxLayout()
+        for x in (self.loop_btn, self.toa_btn, clr):
+            r2.addWidget(x, 1)
         v.addLayout(r)
+        v.addLayout(r2)
         return g
 
     # ---------- lyrics ----------
