@@ -1,7 +1,8 @@
 name: Build and release
 
 # Publishing a release on GitHub (Releases > Draft a new release) builds the
-# Windows and Mac apps and attaches them to it. "Run workflow" builds without releasing.
+# Windows and Mac apps plus the instrument-splitter add-on and attaches them.
+# "Run workflow" builds and tests without releasing.
 on:
   release:
     types: [published]
@@ -18,15 +19,61 @@ jobs:
         include:
           - os: windows-latest
             asset: Tempo-Windows.zip
-            exe: dist/Tempo/Tempo.exe
           - os: macos-latest
             asset: Tempo-Mac.zip
-            exe: dist/Tempo.app/Contents/MacOS/Tempo
           - os: macos-15-intel
             asset: Tempo-Mac-Intel.zip
-            exe: dist/Tempo.app/Contents/MacOS/Tempo
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pylibrb pyinstaller
+      - name: Check the studio engine
+        run: python -c "from tempo.stretch import rubberband_available as ok, engine_problem as why; print('Rubber Band R3 ready:', ok(), why())"
+      - name: Build app
+        run: >
+          pyinstaller --noconfirm --windowed --name Tempo
+          --collect-all imageio_ffmpeg --collect-all pylibrb --collect-data certifi
+          --exclude-module torch --exclude-module demucs
+          run_tempo.py
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/Tempo -DestinationPath ${{ matrix.asset }}
+      - name: Package (Mac)
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent dist/Tempo.app ${{ matrix.asset }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  splitter:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            asset: Tempo-Splitter-Windows.zip
+            exe: dist/TempoSplitter/TempoSplitter.exe
+            flags: --noconsole
+          - os: macos-latest
+            asset: Tempo-Splitter-Mac.zip
+            exe: dist/TempoSplitter/TempoSplitter
+          - os: macos-15-intel
+            asset: Tempo-Splitter-Mac-Intel.zip
+            exe: dist/TempoSplitter/TempoSplitter
             constraints: constraints-mac-intel.txt
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -40,9 +87,7 @@ jobs:
           python -m pip install --upgrade pip
           C=""
           if [ -n "${{ matrix.constraints }}" ]; then C="-c ${{ matrix.constraints }}"; fi
-          python -m pip install -r requirements.txt pylibrb pyinstaller $C
-      - name: Check the studio engine
-        run: python -c "from tempo.stretch import rubberband_available as ok, engine_problem as why; print('Rubber Band R3 ready:', ok(), why())"
+          python -m pip install numpy imageio-ffmpeg -r requirements-splitter.txt pyinstaller $C
       - name: Make a test song
         run: |
           python -c "
@@ -50,44 +95,43 @@ jobs:
           sr=44100; t=np.arange(sr*8)/sr
           x=0.3*np.sin(2*np.pi*220*t)+0.2*np.sin(2*np.pi*660*t)*(t%0.5<0.1)+0.05*np.random.randn(len(t))
           write_wav('test-song.wav', np.stack([x,x],1).astype('float32'), sr)"
-      - name: Test instrument splitting (Python)
+      - name: Test splitting (Python)
         run: |
-          python run_tempo.py --stems-worker test-song.wav out-py htdemucs progress-py.txt
-          tail -3 progress-py.txt
-          ls out-py
+          python splitter.py test-song.wav out-py htdemucs progress-py.txt
+          tail -2 progress-py.txt
           test -f out-py/vocals.wav && test -f out-py/drums.wav
-      - name: Build app
+      - name: Build add-on
         run: >
-          pyinstaller --noconfirm --windowed --name Tempo
-          --collect-all imageio_ffmpeg --collect-all pylibrb --collect-data certifi
+          pyinstaller --noconfirm --name TempoSplitter ${{ matrix.flags }}
+          --collect-all imageio_ffmpeg --collect-data certifi
           --collect-all demucs --collect-all dora --collect-all julius --collect-all openunmix
           --collect-all lameenc --collect-data omegaconf --collect-submodules torchaudio
-          run_tempo.py
-      - name: Test instrument splitting (built app)
+          --exclude-module PySide6 --exclude-module pylibrb
+          splitter.py
+      - name: Test splitting (built add-on)
         env:
           TEMPO_DEBUG: '1'
         run: |
           python -c "
           import subprocess, sys
           try:
-              r = subprocess.run([sys.argv[1], '--stems-worker', 'test-song.wav', 'out-app', 'htdemucs', 'progress-app.txt'], timeout=600, capture_output=True, text=True)
+              r = subprocess.run([sys.argv[1], 'test-song.wav', 'out-app', 'htdemucs', 'progress-app.txt'], timeout=600, capture_output=True, text=True)
               print('exit', r.returncode); print(r.stdout[-3000:]); print(r.stderr[-3000:])
           except subprocess.TimeoutExpired as e:
-              print('TIMED OUT'); print((e.stdout or b'')[-3000:]); print((e.stderr or b'')[-3000:])
+              print('TIMED OUT')
           " "${{ matrix.exe }}"
           cat progress-app.txt || true
-          ls out-app
           test -f out-app/vocals.wav && test -f out-app/drums.wav
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/Tempo -DestinationPath ${{ matrix.asset }}
+        run: Compress-Archive -Path dist/TempoSplitter -DestinationPath ${{ matrix.asset }}
       - name: Package (Mac)
         if: runner.os == 'macOS'
-        run: ditto -c -k --keepParent dist/Tempo.app ${{ matrix.asset }}
+        run: ditto -c -k --keepParent dist/TempoSplitter ${{ matrix.asset }}
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.asset }}
+          name: splitter-${{ matrix.asset }}
           path: ${{ matrix.asset }}
 
   source:
@@ -98,7 +142,7 @@ jobs:
         run: |
           mkdir -p pkg/Tempo
           git archive HEAD | tar -x -C pkg/Tempo
-          rm -rf pkg/Tempo/.github pkg/Tempo/.gitignore pkg/Tempo/.gitattributes pkg/Tempo/README.md
+          rm -rf pkg/Tempo/.github pkg/Tempo/.gitignore pkg/Tempo/.gitattributes pkg/Tempo/README.md pkg/Tempo/splitter.py
           chmod +x pkg/Tempo/*.command
           cd pkg && zip -r -X ../Tempo-source.zip Tempo
       - uses: actions/upload-artifact@v4
@@ -113,6 +157,22 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: Tempo-*
+          path: out
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: out/*
+
+  release-splitter:
+    needs: [splitter]
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: splitter-*
           path: out
           merge-multiple: true
       - uses: softprops/action-gh-release@v2

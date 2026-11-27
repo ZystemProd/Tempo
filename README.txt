@@ -72,10 +72,11 @@ Keyboard: Space play/pause, Left/Right 5 s, [ and ] speed -/+5%,
 A and B set loop points, L loop on/off, Ctrl/Cmd+F search.
 
 
-SPLITTING INSTRUMENTS
----------------------
-Included in the install. Open a song and click "Split into instruments" in the
-Instruments panel. "4 parts" gives vocals, drums, bass, other. "6 parts" adds
+SPLITTING INSTRUMENTS (optional add-on)
+---------------------------------------
+Open a song and click "Download instrument splitter" in the Instruments panel
+(one-time download, about 200-300 MB; the Python version installs it into
+Tempo's own environment). Then click "Split into instruments". "4 parts" gives vocals, drums, bass, other. "6 parts" adds
 piano and guitar (piano separation is the least clean of the six).
 It takes a few minutes per song on a normal computer; the very first time it
 also downloads the separation model (about 80-160 MB). The result is saved, so

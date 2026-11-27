@@ -1,8 +1,7 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 echo ""
-echo " Installing Tempo, including instrument splitting."
-echo " The first time this downloads about 1-2 GB and takes 5-15 minutes."
+echo " Installing Tempo. This takes a few minutes the first time."
 echo ""
 PY=""
 for c in python3.13 python3.12 python3.14 \
@@ -26,7 +25,6 @@ echo " Using $PY"
 .venv/bin/python -m pip install --upgrade pip
 EXTRA=""
 if [ "$(.venv/bin/python -c 'import platform; print(platform.machine())')" = "x86_64" ]; then
-  echo " Intel Mac detected: using the last PyTorch version made for Intel Macs."
   EXTRA="-c constraints-mac-intel.txt"
 fi
 .venv/bin/python -m pip install -r requirements.txt $EXTRA || { echo; echo " Installing failed. Check your internet connection and try again."; read -p " Press Enter to close."; exit 1; }

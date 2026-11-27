@@ -18,10 +18,10 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QCheckBox, QComb
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog,
-                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStyleFactory,
+                               QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStyleFactory,
                                QTableView, QTabWidget, QToolBar, QVBoxLayout, QWidget)
 
-from . import __version__, audio, lyrics, updater
+from . import __version__, addons, audio, lyrics, updater
 from .library import Library
 from .player import Player, render_offline
 from .stretch import engine_problem
@@ -161,6 +161,8 @@ class Bus(QObject):
     lyrics = Signal(int, object, str)
     update_info = Signal(object, str, bool)
     update_done = Signal(str, str)
+    addon_progress = Signal(float, str)
+    addon_done = Signal(str)
 
 
 # ---------------------------------------------------------------- waveform
@@ -422,6 +424,8 @@ class MainWindow(QMainWindow):
         self.bus.lyrics.connect(self._on_lyrics)
         self.bus.update_info.connect(self._on_update_info)
         self.bus.update_done.connect(self._on_update_done)
+        self.bus.addon_progress.connect(self._on_addon_progress)
+        self.bus.addon_done.connect(self._on_addon_done)
         self.update_rel = None
         self.ly_lines, self.ly_times, self.ly_synced, self.ly_cur = [], [], False, -1
         self.ly_results, self.ly_token, self.ly_song = [], 0, None
@@ -1396,6 +1400,24 @@ class MainWindow(QMainWindow):
             L.addWidget(QLabel('Open a song to split it into instruments.', objectName='soft'))
             L.addStretch(1)
             return
+        if not self.stems and not addons.installed(data_dir()):
+            info = QLabel('Split songs into separate instruments (vocals, drums, bass, piano…), then mute, solo or '
+                          'turn down any of them.\n\nThis is an optional add-on (%s download). '
+                          'You only need to download it once.' % addons.SIZE_HINT)
+            info.setWordWrap(True)
+            L.addWidget(info)
+            self.addon_btn = QPushButton('Download instrument splitter', objectName='accent',
+                                         clicked=self.install_addon)
+            L.addWidget(self.addon_btn, 0, Qt.AlignLeft)
+            self.addon_bar = QProgressBar()
+            self.addon_bar.setRange(0, 100)
+            self.addon_bar.hide()
+            L.addWidget(self.addon_bar)
+            self.stem_status = QLabel('', objectName='soft')
+            self.stem_status.setWordWrap(True)
+            L.addWidget(self.stem_status)
+            L.addStretch(1)
+            return
         if not self.stems:
             info = QLabel('Split this song into separate instruments, then mute, solo or turn down any of them. '
                           'Runs on your computer and takes a few minutes per song.')
@@ -1469,11 +1491,47 @@ class MainWindow(QMainWindow):
         self.player.set_stems({})
         self._build_stems_ui()
 
+    def install_addon(self):
+        if getattr(self, '_addon_busy', False):
+            return
+        self._addon_busy = True
+        self.addon_btn.setEnabled(False)
+        self.addon_bar.show()
+        self.addon_bar.setValue(0)
+        dd = data_dir()
+
+        def work():
+            try:
+                addons.install(dd, lambda f, t: self.bus.addon_progress.emit(f, t))
+                self.bus.addon_done.emit('')
+            except Exception as e:
+                self.bus.addon_done.emit(str(e) or type(e).__name__)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_addon_progress(self, f, text):
+        try:
+            self.addon_bar.setValue(int(f * 100))
+            self.stem_status.setText(text)
+        except Exception:
+            pass
+
+    def _on_addon_done(self, err):
+        self._addon_busy = False
+        if err:
+            try:
+                self.addon_btn.setEnabled(True)
+                self.addon_bar.hide()
+                self.stem_status.setText('Download failed. ' + err)
+            except Exception:
+                pass
+            return
+        self.status('Instrument splitter installed')
+        self._build_stems_ui()
+
     def split_stems(self):
-        if not updater.FROZEN and importlib.util.find_spec('demucs') is None:
-            QMessageBox.information(self, 'Instrument splitting is missing',
-                                    'The separation engine is not installed. Close Tempo and run '
-                                    '“Install Tempo” again, then try once more.')
+        if not addons.installed(data_dir()):
+            self._build_stems_ui()
             return
         if self.stem_proc:
             return
@@ -1486,14 +1544,10 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
         proc = QProcess(self)
-        proc.setProgram(sys.executable)
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        worker = ['--stems-worker', self.song['path'], out, model, prog]
-        if updater.FROZEN:
-            proc.setArguments(worker)
-        else:
-            proc.setWorkingDirectory(root)
-            proc.setArguments([os.path.join(root, 'run_tempo.py')] + worker)
+        program, args = addons.command(data_dir(), [self.song['path'], out, model, prog])
+        proc.setProgram(program)
+        proc.setArguments(args)
+        proc.setWorkingDirectory(os.path.dirname(program) if updater.FROZEN else updater.APP_DIR)
         proc.setStandardOutputFile(QProcess.nullDevice())
         proc.setStandardErrorFile(QProcess.nullDevice())
         self._stem_sid = sid

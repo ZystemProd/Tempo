@@ -17,7 +17,7 @@ Get the newest version from **[Releases](../../releases/latest)**:
 
 Not sure which Mac you have? Apple menu › About This Mac: it says either "Chip: Apple M…" or "Processor: Intel…".
 
-All three include instrument splitting.
+Instrument splitting is an optional add-on: Tempo downloads it (`Tempo-Splitter-*.zip`) the first time you click **Download instrument splitter**.
 
 Tempo checks for new versions itself: click **Updates** in the toolbar.
 
