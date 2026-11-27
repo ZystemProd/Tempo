@@ -1,9 +1,10 @@
 name: Build and release
 
-# Push a tag like v1.2.0 to build the Windows and Mac apps and publish a release.
+# Publishing a release on GitHub (Releases > Draft a new release) builds the
+# Windows and Mac apps and attaches them to it. "Run workflow" builds without releasing.
 on:
-  push:
-    tags: ['v*']
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -66,7 +67,7 @@ jobs:
 
   release:
     needs: [app, source]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -75,5 +76,5 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name }}
           files: out/*
-          generate_release_notes: true
