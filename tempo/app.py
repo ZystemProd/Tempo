@@ -427,6 +427,7 @@ class MainWindow(QMainWindow):
         self.bus.addon_progress.connect(self._on_addon_progress)
         self.bus.addon_done.connect(self._on_addon_done)
         self.update_rel = None
+        self._split = None
         self.ly_lines, self.ly_times, self.ly_synced, self.ly_cur = [], [], False, -1
         self.ly_results, self.ly_token, self.ly_song = [], 0, None
         self.bus.added.connect(lambda n: (self.refresh(), self.status('Added %d song%s' % (n, '' if n == 1 else 's'))))
@@ -1419,6 +1420,34 @@ class MainWindow(QMainWindow):
             L.addStretch(1)
             return
         if not self.stems:
+            sp = self._split
+            if sp and sp['sid'] == self.song['id']:
+                self.split_stage = QLabel('')
+                self.split_stage.setStyleSheet('font-weight: 600;')
+                self.split_stage.setWordWrap(True)
+                L.addWidget(self.split_stage)
+                self.split_bar = QProgressBar()
+                self.split_bar.setRange(0, 100)
+                self.split_bar.setFormat('%p%')
+                self.split_bar.setMinimumHeight(22)
+                L.addWidget(self.split_bar)
+                self.split_dl = QProgressBar()
+                self.split_dl.setRange(0, 100)
+                self.split_dl.setFormat('Downloading the model (first time only)  %p%')
+                self.split_dl.setMaximumHeight(16)
+                self.split_dl.hide()
+                L.addWidget(self.split_dl)
+                row = QHBoxLayout()
+                self.split_time = QLabel('', objectName='soft')
+                row.addWidget(self.split_time, 1)
+                row.addWidget(QPushButton('Cancel', clicked=self.cancel_split))
+                L.addLayout(row)
+                self.stem_status = QLabel('You can keep practising while it works.', objectName='soft')
+                self.stem_status.setWordWrap(True)
+                L.addWidget(self.stem_status)
+                L.addStretch(1)
+                self._render_split()
+                return
             info = QLabel('Split this song into separate instruments, then mute, solo or turn down any of them. '
                           'Runs on your computer and takes a few minutes per song.')
             info.setWordWrap(True)
@@ -1429,8 +1458,16 @@ class MainWindow(QMainWindow):
             L.addWidget(self.stem_model)
             b = QPushButton('Split into instruments', objectName='accent', clicked=self.split_stems)
             L.addWidget(b)
+            if addons.outdated(data_dir()) and not sp:
+                upd = QPushButton('Update the splitter (shows step-by-step progress)', clicked=self.update_addon)
+                upd.setToolTip('Downloads the newest instrument splitter, %s.' % addons.SIZE_HINT)
+                L.addWidget(upd, 0, Qt.AlignLeft)
             self.stem_status = QLabel('', objectName='soft')
             self.stem_status.setWordWrap(True)
+            if sp:
+                b.setEnabled(False)
+                self.stem_status.setText('Another song is being split right now (%d%%). '
+                                         'You can split this one when it is done.' % sp['pct'])
             L.addWidget(self.stem_status)
             L.addStretch(1)
             return
@@ -1509,6 +1546,11 @@ class MainWindow(QMainWindow):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def update_addon(self):
+        addons.remove(data_dir())
+        self._build_stems_ui()
+        self.install_addon()
+
     def _on_addon_progress(self, f, text):
         try:
             self.addon_bar.setValue(int(f * 100))
@@ -1528,6 +1570,8 @@ class MainWindow(QMainWindow):
             return
         self.status('Instrument splitter installed')
         self._build_stems_ui()
+
+    SPLIT_STAGES = 5
 
     def split_stems(self):
         if not addons.installed(data_dir()):
@@ -1550,43 +1594,44 @@ class MainWindow(QMainWindow):
         proc.setWorkingDirectory(os.path.dirname(program) if updater.FROZEN else updater.APP_DIR)
         proc.setStandardOutputFile(QProcess.nullDevice())
         proc.setStandardErrorFile(QProcess.nullDevice())
-        self._stem_sid = sid
-        self._stem_result = None
-        self._stem_off = 0
+        self._split = {'sid': sid, 'title': self.song['title'] or 'song', 'stage': 1,
+                       'text': 'Starting the separation engine', 'pct': 0, 'download': None,
+                       't0': time.time(), 'sep_t0': None, 'sep_p0': 0, 'result': None, 'off': 0,
+                       'cancelled': False}
+        sp = self._split
 
         def read():
             try:
                 with open(prog, 'r', encoding='utf-8') as f:
-                    f.seek(self._stem_off)
+                    f.seek(sp['off'])
                     chunk = f.read()
-                    self._stem_off = f.tell()
+                    sp['off'] = f.tell()
             except OSError:
-                return
+                chunk = ''
             for line in chunk.splitlines():
-                line = line.strip()
-                if line.startswith('PROGRESS'):
-                    self._stem_msg('Separating… %s%%' % line.split()[1])
-                elif line.startswith('STATUS'):
-                    self._stem_msg(line[7:])
-                elif line.startswith('DONE'):
-                    self._stem_result = json.loads(line[5:])
-                elif line.startswith('ERROR'):
-                    self._stem_result = line
+                self._split_line(sp, line.strip())
+            self._render_split()
 
         def done(code, _status):
             poll.stop()
             read()
             self.stem_proc = None
-            res = self._stem_result
+            self._split = None
+            res = sp['result']
             if isinstance(res, list):
                 self.lib.update(sid, stems=json.dumps(res))
-                self.status('Instruments separated')
+                mins = (time.time() - sp['t0']) / 60
+                self.status('“%s” split into %d instruments in %d min' % (sp['title'], len(res), round(mins) or 1))
                 if self.song and self.song['id'] == sid:
                     self._resume_after = (self.player.position(), self.player.playing)
                     self._keep_settings = True
                     self.open_song(sid, autoplay=False)
             else:
-                self._stem_msg('Separation failed. %s' % (res or 'Exit code %d' % code))
+                if self.song and self.song['id'] == sid:
+                    self._build_stems_ui()
+                msg = 'Splitting was cancelled.' if sp['cancelled'] else \
+                    'Separation failed. %s' % (res or 'Exit code %d' % code)
+                self._stem_msg(msg)
             try:
                 os.remove(prog)
             except OSError:
@@ -1596,8 +1641,67 @@ class MainWindow(QMainWindow):
         poll.start()
         proc.finished.connect(done)
         self.stem_proc = proc
-        self._stem_msg('Starting…')
         proc.start()
+        self._build_stems_ui()
+
+    def _split_line(self, sp, line):
+        if line.startswith('STAGE '):
+            parts = line.split(' ', 2)
+            sp['stage'] = int(parts[1])
+            sp['text'] = parts[2] if len(parts) > 2 else ''
+            sp['download'] = None
+            if sp['stage'] == 4:
+                sp['sep_t0'], sp['sep_p0'] = time.time(), sp['pct']
+        elif line.startswith('STATUS '):  # splitter add-on from Tempo 1.3
+            sp['text'] = line[7:]
+        elif line.startswith('PROGRESS '):
+            try:
+                sp['pct'] = max(sp['pct'], min(100, int(float(line.split()[1]))))
+            except ValueError:
+                pass
+            if sp['sep_t0'] is None and sp['pct'] > 5 and 'Separat' in sp['text']:
+                sp['sep_t0'], sp['sep_p0'] = time.time(), sp['pct']
+        elif line.startswith('DOWNLOAD '):
+            try:
+                sp['download'] = int(float(line.split()[1]))
+            except ValueError:
+                pass
+        elif line.startswith('DONE '):
+            sp['result'] = json.loads(line[5:])
+        elif line.startswith('ERROR'):
+            sp['result'] = line[6:]
+
+    def _render_split(self):
+        sp = self._split
+        if not sp:
+            return
+        elapsed = time.time() - sp['t0']
+        eta = ''
+        if sp['sep_t0'] and sp['pct'] < 96:
+            done_frac = (sp['pct'] - sp['sep_p0']) / max(1, 100 - sp['sep_p0'])
+            run = time.time() - sp['sep_t0']
+            if done_frac > 0.04 and run > 5:
+                left = run * (1 - done_frac) / done_frac
+                eta = ' · about %s left' % (('%d min' % round(left / 60)) if left >= 90 else '%d s' % max(5, round(left / 5) * 5))
+        try:
+            self.split_stage.setText('Step %d of %d: %s…' % (sp['stage'], self.SPLIT_STAGES, sp['text']))
+            self.split_bar.setValue(sp['pct'])
+            self.split_time.setText('%s elapsed%s' % (fmt(elapsed), eta))
+            if sp['download'] is not None and sp['download'] < 100:
+                self.split_dl.show()
+                self.split_dl.setValue(sp['download'])
+            else:
+                self.split_dl.hide()
+        except (AttributeError, RuntimeError):
+            pass
+        if not (self.song and self.song['id'] == sp['sid']):
+            self.status('Splitting “%s”: %d%%%s' % (sp['title'], sp['pct'], eta))
+
+    def cancel_split(self):
+        if self.stem_proc and self._split:
+            if QMessageBox.question(self, 'Cancel splitting', 'Stop splitting this song?') == QMessageBox.Yes:
+                self._split['cancelled'] = True
+                self.stem_proc.kill()
 
     def _stem_msg(self, text):
         try:

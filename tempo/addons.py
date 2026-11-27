@@ -18,6 +18,9 @@ from . import __version__, updater
 _NO_WINDOW = 0x08000000 if sys.platform == 'win32' else 0
 FROZEN = updater.FROZEN
 SIZE_HINT = 'about 200–300 MB'
+# Oldest splitter add-on this app is fully happy with. Raise it only when stems_worker changes,
+# so people aren't asked to download 200 MB with every release.
+ADDON_VERSION = '1.4.0'
 
 
 def _mac_intel():
@@ -43,6 +46,21 @@ def installed(data_dir):
     if FROZEN:
         return os.path.isfile(_frozen_exe(data_dir))
     return importlib.util.find_spec('demucs') is not None
+
+
+def installed_version(data_dir):
+    try:
+        with open(os.path.join(_frozen_dir(data_dir), 'version.txt'), encoding='utf-8') as f:
+            return f.read().strip()
+    except OSError:
+        return None
+
+
+def outdated(data_dir):
+    if not FROZEN or not installed(data_dir):
+        return False
+    v = installed_version(data_dir)
+    return v is None or updater.version_tuple(v) < updater.version_tuple(ADDON_VERSION)
 
 
 def command(data_dir, args):
@@ -96,6 +114,8 @@ def _install_frozen(data_dir, progress):
                 z.extractall(new)
         if not os.path.isdir(os.path.join(new, 'TempoSplitter')):
             raise RuntimeError('The downloaded add-on looks incomplete.')
+        with open(os.path.join(new, 'version.txt'), 'w', encoding='utf-8') as f:
+            f.write(rel.get('tag_name', '').lstrip('v') or __version__)
         shutil.rmtree(dest, ignore_errors=True)
         os.replace(new, dest)
         exe = _frozen_exe(data_dir)

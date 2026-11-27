@@ -155,6 +155,7 @@ jobs:
           " "${{ matrix.exe }}"
           cat progress-app.txt || true
           test -f out-app/vocals.wav && test -f out-app/drums.wav
+          grep -q "STAGE 5" progress-app.txt
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
