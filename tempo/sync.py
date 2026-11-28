@@ -87,8 +87,9 @@ class SyncFolder:
                    abs_path=None if rel else row['path'], deleted=False)
         self._write(self.data_songs, row['uid'], rec)
 
-    def delete_song(self, uid, modified):
-        self._write(self.data_songs, uid, {'uid': uid, 'deleted': True, 'modified': modified})
+    def delete_song(self, uid, modified, rel_path=None):
+        self._write(self.data_songs, uid, {'uid': uid, 'deleted': True, 'modified': modified,
+                                           'rel_path': rel_path})
 
     def write_collection(self, uid, name, song_uids, modified):
         self._write(self.data_cols, uid, {'uid': uid, 'name': name, 'songs': song_uids,

@@ -9,7 +9,7 @@ import shutil
 import sqlite3
 import time
 
-from .audio import is_audio, read_tags
+from .audio import AUDIO_EXTS, is_audio, read_tags
 from .sync import SONG_FIELDS, new_uid
 
 SCHEMA = """
@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS songs(
 );
 CREATE TABLE IF NOT EXISTS collections(
   id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, created REAL
+);
+CREATE TABLE IF NOT EXISTS ignored(
+  rel TEXT PRIMARY KEY
 );
 CREATE TABLE IF NOT EXISTS collection_songs(
   collection_id INTEGER, song_id INTEGER, pos REAL,
@@ -101,6 +104,8 @@ class Library:
         row = self.db.execute('SELECT id FROM songs WHERE path=?', (path,)).fetchone()
         if row:
             return row['id']
+        if self.sync and self.sync.rel(path):
+            self.db.execute('DELETE FROM ignored WHERE rel=?', (self.sync.rel(path),))
         t = read_tags(path)
         now = time.time()
         cur = self.db.execute('INSERT INTO songs(path,title,artist,album,duration,added,uid,modified) '
@@ -162,8 +167,11 @@ class Library:
             self.db.execute('DELETE FROM songs WHERE id=?', (sid,))
             self.db.execute('DELETE FROM collection_songs WHERE song_id=?', (sid,))
             if row and self.sync:
+                rel = self.sync.rel(row['path'])
+                if rel:  # the file stays in the sync folder: don't pick it up again
+                    self.db.execute('INSERT OR IGNORE INTO ignored VALUES(?)', (rel,))
                 try:
-                    self.sync.delete_song(row['uid'], time.time())
+                    self.sync.delete_song(row['uid'], time.time(), rel)
                 except OSError:
                     pass
         self.db.commit()
@@ -284,6 +292,8 @@ class Library:
             uid, mod = rec['uid'], rec.get('modified') or 0
             row = self.db.execute('SELECT * FROM songs WHERE uid=?', (uid,)).fetchone()
             if rec.get('deleted'):
+                if rec.get('rel_path'):
+                    self.db.execute('INSERT OR IGNORE INTO ignored VALUES(?)', (rec['rel_path'],))
                 if row and (row['modified'] or 0) <= mod:
                     self.db.execute('DELETE FROM collection_songs WHERE song_id=?', (row['id'],))
                     self.db.execute('DELETE FROM songs WHERE id=?', (row['id'],))
@@ -369,6 +379,34 @@ class Library:
             n += 1
         self.db.commit()
         return n
+
+    def scan_new(self, settle=5.0):
+        """Add audio files that appeared in the sync folder's Songs/ (dropped in with Explorer or Finder).
+        Skips files removed from the library on purpose and files still being copied."""
+        sync = self.sync
+        known = {r[0] for r in self.db.execute('SELECT path FROM songs')}
+        ignored = {r[0] for r in self.db.execute('SELECT rel FROM ignored')}
+        now = time.time()
+        added = 0
+        for root, dirs, names in os.walk(sync.songs_dir):
+            dirs[:] = [d for d in dirs if not d.startswith('.')]
+            for name in names:
+                if name.startswith(('.', '~')) or os.path.splitext(name)[1].lower() not in AUDIO_EXTS:
+                    continue
+                path = os.path.join(root, name)
+                if path in known:
+                    continue
+                rel = sync.rel(path)
+                if not rel or rel in ignored:
+                    continue
+                try:
+                    if now - os.path.getmtime(path) < settle or os.path.getsize(path) == 0:
+                        continue  # still being copied or downloaded
+                except OSError:
+                    continue
+                if self.add_file(path):
+                    added += 1
+        return added
 
     def _free_name(self, name, cid=None):
         cand, k = name, 2

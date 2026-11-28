@@ -1301,7 +1301,9 @@ class MainWindow(QMainWindow):
         def work():
             try:
                 lib = Library(db, sync)
-                self.bus.synced.emit(lib.apply_remote(*sync.changed()), '')
+                n = lib.apply_remote(*sync.changed())
+                n += lib.scan_new()
+                self.bus.synced.emit(n, '')
             except Exception as e:
                 self.bus.synced.emit(0, str(e) or type(e).__name__)
 
@@ -1607,8 +1609,10 @@ class MainWindow(QMainWindow):
 
     def remove_songs(self, ids):
         if QMessageBox.question(self, 'Remove from library',
-                                'Remove %d song%s from the library? The files on your computer are not deleted.'
-                                % (len(ids), '' if len(ids) == 1 else 's')) == QMessageBox.Yes:
+                                'Remove %d song%s from the library? The files on your computer are not deleted%s.'
+                                % (len(ids), '' if len(ids) == 1 else 's',
+                                   ' (files in the sync folder stay there, and Tempo won\'t add them again)'
+                                   if self.sync else '')) == QMessageBox.Yes:
             self.lib.remove(ids)
             self.refresh_sidebar()
             self.refresh()

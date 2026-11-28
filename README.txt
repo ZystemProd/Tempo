@@ -111,6 +111,10 @@ Synced: songs, collections, favourites, song details (BPM, key, tags),
 lyrics and their timing, separated instruments, and the BPM/key analysis.
 Not synced (per computer): window layout, volume, Click/Count-in settings.
 Songs you add while sync is on are copied into the sync folder automatically.
+You can also drop audio files straight into "Tempo Library/Songs" with
+Explorer or Finder (sub-folders are fine): Tempo adds them within about
+10 seconds. Songs you remove from the library stay in that folder and are
+not added again unless you add them yourself.
 Changes from other computers appear within about 10 seconds. If the same
 song is changed on two computers at once, the latest change is kept.
 
