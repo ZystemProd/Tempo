@@ -10,7 +10,7 @@ import numpy as np
 
 from .audio import decode
 
-VERSION = 1
+VERSION = 2  # 2: bass check against clicking on the off-beat
 SR = 22050
 N_FFT = 2048
 HOP = 512
@@ -57,6 +57,38 @@ def _onsets(S):
     o = _flux(logM) / logM.shape[1]
     g = np.exp(-0.5 * (np.arange(-3, 4) / 1.2) ** 2)
     return _normalize(np.convolve(o, g / g.sum(), mode='same'))
+
+
+def _bass_onsets(S):
+    """Onsets below ~160 Hz: bass drum and bass notes, which nearly always fall on the beat."""
+    freqs = np.fft.rfftfreq(N_FFT, 1.0 / SR)
+    L = S[:, (freqs > 25) & (freqs < 160)]
+    logL = np.log1p(1000.0 * L / (L.max() + 1e-9))
+    o = _flux(logL)
+    g = np.exp(-0.5 * (np.arange(-3, 4) / 1.2) ** 2)
+    return _normalize(np.convolve(o, g / g.sum(), mode='same'))
+
+
+def _on_beat(beats, o, bass):
+    """If the beats sit on the off-beats (a common trap when hi-hats or chord stabs fall between
+    the beats), move them half a beat. Judged mostly by bass drum and bass note energy."""
+    if len(beats) < 8:
+        return beats
+
+    def strength(fr):
+        fr = fr[(fr >= 2) & (fr < len(o) - 2)]
+        if not len(fr):
+            return 0.0
+        win = fr[:, None] + np.arange(-2, 3)[None, :]
+        return 3.0 * bass[win].max(axis=1).mean() + o[win].max(axis=1).mean()
+
+    half = (beats[:-1] + beats[1:]) // 2
+    step = int(np.median(np.diff(beats)))
+    if half[-1] + step < len(o):
+        half = np.r_[half, half[-1] + step]
+    if strength(half) > 1.08 * strength(beats):
+        return half
+    return beats
 
 
 def _flux(logS):
@@ -224,6 +256,7 @@ def analyze_audio(mono, sr=SR):
     o = _onsets(S)
     bpm = _tempo(o)
     beats = _track(o, bpm)
+    beats = _on_beat(beats, o, _bass_onsets(S))
     if len(beats) > 8:  # refine the tempo: straight-line fit through the beat times
         slope = np.polyfit(np.arange(len(beats)), beats / FPS, 1)[0]
         if slope > 0:
