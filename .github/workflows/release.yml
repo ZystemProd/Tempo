@@ -21,12 +21,16 @@ jobs:
     outputs:
       tag: ${{ steps.v.outputs.tag }}
       publish: ${{ steps.v.outputs.publish }}
+      runtime: ${{ steps.v.outputs.runtime }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Fingerprint of everything built into the apps besides Tempo's own code. Releases with
+          # the same fingerprint can be installed as a quick code-only update.
+          echo "runtime=$(cat requirements.txt run_tempo.py .github/workflows/release.yml | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
             echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -71,11 +75,32 @@ jobs:
       - name: Check the studio engine
         run: python -c "from tempo.stretch import rubberband_available as ok, engine_problem as why; print('Rubber Band R3 ready:', ok(), why())"
       - name: Build app
-        run: >
-          pyinstaller --noconfirm --windowed --name Tempo
-          --collect-all imageio_ffmpeg --collect-all pylibrb --collect-data certifi
-          --exclude-module torch --exclude-module demucs
-          run_tempo.py
+        run: |
+          echo "${{ needs.version.outputs.runtime }}" > tempo_runtime.txt
+          python -c "import tempo; print(tempo.__version__)" > tempo_version.txt
+          SEP=":"; [ "$RUNNER_OS" = "Windows" ] && SEP=";"
+          pyinstaller --noconfirm --windowed --name Tempo \
+            --collect-all imageio_ffmpeg --collect-all pylibrb --collect-data certifi \
+            --exclude-module torch --exclude-module demucs \
+            --add-data "tempo_runtime.txt${SEP}." --add-data "tempo_version.txt${SEP}." \
+            run_tempo.py
+      - name: Test quick code updates in the built app
+        run: |
+          EXE=dist/Tempo/Tempo.exe; [ "$RUNNER_OS" = "macOS" ] && EXE=dist/Tempo.app/Contents/MacOS/Tempo
+          export TEMPO_DATA_DIR="$PWD/test-data"
+          [ "$RUNNER_OS" = "Windows" ] && export TEMPO_DATA_DIR="$(cygpath -w "$PWD/test-data")"
+          BUILT=$(tr -d '\r\n' < tempo_version.txt)
+          mkdir -p test-data/code/9.9.9 && cp -r tempo test-data/code/9.9.9/
+          echo "__version__ = '9.9.9'" > test-data/code/9.9.9/tempo/__init__.py
+          check() {
+            python -c "import subprocess,sys; subprocess.run([sys.argv[1], '--print-version', 'ver.txt'], timeout=120)" "$EXE"
+            echo "$1 -> $(cat ver.txt)"; grep -q "^$2 " ver.txt
+          }
+          check "no update" "$BUILT"
+          echo '{"version": "9.9.9", "runtime": "${{ needs.version.outputs.runtime }}"}' > test-data/code/active.json
+          check "code update for these built-in parts" "9.9.9"
+          echo '{"version": "9.9.9", "runtime": "something-else"}' > test-data/code/active.json
+          check "code update for other built-in parts is ignored" "$BUILT"
       - name: Package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -180,10 +205,25 @@ jobs:
           rm -rf pkg/Tempo/.github pkg/Tempo/.gitignore pkg/Tempo/.gitattributes pkg/Tempo/README.md pkg/Tempo/splitter.py
           chmod +x pkg/Tempo/*.command
           cd pkg && zip -r -X ../Tempo-source.zip Tempo
+      - name: Package the quick code update
+        run: |
+          mkdir -p code && git archive HEAD tempo | tar -x -C code
+          (cd code && zip -r -X ../Tempo-code.zip tempo)
+          V=$(python3 -c "import re; print(re.search(r'[\"\']([0-9][^\"\']*)[\"\']', open('tempo/__init__.py').read()).group(1))")
+          echo "{\"version\": \"$V\", \"runtime\": \"${{ needs.version.outputs.runtime }}\"}" > Tempo-update.json
+          cat Tempo-update.json
       - uses: actions/upload-artifact@v4
         with:
           name: Tempo-source.zip
           path: Tempo-source.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tempo-code.zip
+          path: Tempo-code.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tempo-update.json
+          path: Tempo-update.json
 
   release:
     needs: [version, app, source]

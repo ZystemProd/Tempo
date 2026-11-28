@@ -1441,7 +1441,10 @@ class MainWindow(QMainWindow):
 
         def work():
             try:
-                self.bus.update_info.emit(updater.latest_release(), '', manual)
+                rel = updater.latest_release()
+                if updater.is_newer(rel.get('tag_name', '')):
+                    rel['_plan'] = updater.plan(rel)
+                self.bus.update_info.emit(rel, '', manual)
             except Exception as e:
                 self.bus.update_info.emit(None, str(e) or type(e).__name__, manual)
 
@@ -1467,16 +1470,20 @@ class MainWindow(QMainWindow):
 
     def _offer_update(self, rel):
         tag = rel.get('tag_name', '').lstrip('v')
+        kind = rel.get('_plan') or updater.plan(rel)
         notes = (rel.get('body') or '').strip()
-        if len(notes) > 900:
-            notes = notes[:900] + '…'
-        how = ('The new version will be downloaded to your Downloads folder.' if updater.FROZEN else
-               'Tempo will update itself and restart. Your library is kept.')
-        msg = 'Tempo %s is available (you have %s).\n\n%s%s\n\nInstall it now?' % (
+        if len(notes) > 700:
+            notes = notes[:700] + '…'
+        size = updater.size_of(rel, kind)
+        how = {'code': 'A quick update (%s). Tempo restarts by itself in a few seconds.',
+               'source': 'Download: %s. Tempo updates itself and restarts.',
+               'full': 'This version includes new built-in parts, so the whole app is downloaded (%s). '
+                       'Tempo then replaces itself and restarts.'}[kind] % _size(size)
+        msg = 'Tempo %s is available (you have %s).\n\n%s%s\n\nYour library is kept. Update now?' % (
             tag, __version__, (notes + '\n\n') if notes else '', how)
         if QMessageBox.question(self, 'Update Tempo', msg) != QMessageBox.Yes:
             return
-        dlg = QProgressDialog('Downloading Tempo %s…' % tag, None, 0, 100, self)
+        dlg = QProgressDialog('Updating to Tempo %s…' % tag, None, 0, 100, self)
         dlg.setWindowModality(Qt.WindowModal)
         dlg.setMinimumDuration(0)
         dlg.setValue(0)
@@ -1487,17 +1494,21 @@ class MainWindow(QMainWindow):
 
         def work():
             try:
-                if updater.FROZEN:
-                    self.bus.update_done.emit(updater.download_app_update(rel, bus.progress.emit), '')
-                else:
+                if kind == 'code':
+                    updater.install_code_update(rel, bus.progress.emit)
+                    self.bus.update_done.emit('restart', '')
+                elif kind == 'source':
                     updater.install_source_update(rel, bus.progress.emit)
-                    self.bus.update_done.emit('', '')
+                    self.bus.update_done.emit('restart', '')
+                else:
+                    cmd = updater.prepare_full_update(rel, bus.progress.emit)
+                    self.bus.update_done.emit('full:' + json.dumps(cmd), '')
             except Exception as e:
                 self.bus.update_done.emit('', str(e) or type(e).__name__)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _on_update_done(self, path, err):
+    def _on_update_done(self, what, err):
         try:
             self._upd_dlg.close()
         except Exception:
@@ -1505,13 +1516,12 @@ class MainWindow(QMainWindow):
         if err:
             QMessageBox.warning(self, 'Update failed', err + '\n\nYou can also download it from ' + updater.RELEASES)
             return
-        if path:
-            QMessageBox.information(self, 'Update downloaded',
-                                    'The new version was saved to:\n%s\n\nQuit Tempo, unzip it and replace the old '
-                                    'Tempo app with the new one. Your library is kept.' % path)
-            reveal(path)
-            return
-        if QMessageBox.question(self, 'Tempo updated', 'Tempo was updated. Restart now?') == QMessageBox.Yes:
+        self.status('Restarting with the new version…')
+        QApplication.processEvents()
+        if what.startswith('full:'):
+            updater.launch_detached(json.loads(what[5:]))
+            self.close()
+        elif what == 'restart':
             self.close()
             updater.restart()
 
