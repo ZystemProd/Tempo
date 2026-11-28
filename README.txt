@@ -126,9 +126,11 @@ Without sync, the library and separated instruments are in:
 Back up that folder to keep your library. Your song files are never changed.
 
 UPDATING
-  Click "Updates" in Tempo's toolbar. Tempo downloads the newest version,
-  updates itself and restarts. Your library is kept. It also checks quietly
-  once a day and shows "Update available" when there is something new.
+  Click "Updates" in Tempo's toolbar (it also checks once a day and shows
+  "Update available"). Most updates are quick: only Tempo's own code is
+  downloaded (a few hundred KB) and Tempo restarts by itself in seconds.
+  When a version changes Tempo's built-in parts, the whole app is downloaded
+  instead; Tempo then replaces itself and restarts. Your library is kept.
   New versions are published at https://github.com/ZystemProd/Tempo/releases
 
 PROBLEMS
