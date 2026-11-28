@@ -909,7 +909,7 @@ class MainWindow(QMainWindow):
         tr.addWidget(self.time_lbl)
         tr.addSpacing(12)
         self.click_btn = QPushButton('Click', checkable=True)
-        self.click_btn.setToolTip('Metronome click on every beat, in time at any speed (bar starts are higher)')
+        self.click_btn.setToolTip('Metronome click on every beat of the song, in time at any speed')
         self.click_btn.toggled.connect(self._toggle_click)
         tr.addWidget(self.click_btn)
         self.countin_btn = QPushButton('Count-in', checkable=True)

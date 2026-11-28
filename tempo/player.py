@@ -131,7 +131,7 @@ class Player:
             self._apply_loop()
 
     def _click(self, out, off, accent):
-        c = self.click_hi if accent else self.click_lo
+        c = self.click_hi  # one sound for every beat (no accent on bar starts)
         c = c * np.float32(self.click_level)
         k = max(0, min(len(c), len(out) - off))
         out[off:off + k] += c[:k, None]

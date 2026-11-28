@@ -56,8 +56,10 @@ Player (double-click a song)
     a few seconds per song). They appear in the BPM and Key columns; you can
     correct them under Edit details. If the tempo is shown at half or double
     speed, type the right BPM there and the click follows.
-  - Click: a metronome click on every beat that stays in time at any speed
-    (the first beat of each bar is higher).
+  - Click: a metronome click on every beat of the song. It follows the
+    beats Tempo found in the recording, so it stays in time at any speed and
+    follows a song that speeds up or slows down a little. Very free tempo
+    (strong rubato) can throw it off.
   - Count-in: one bar of clicks before the music starts, either only when you
     press play or also before every loop repeat.
   - Loop: Set A / Set B, or drag across the waveform.
