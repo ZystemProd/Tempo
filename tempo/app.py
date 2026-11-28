@@ -18,7 +18,7 @@ from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QKeySequence, QPainter
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog,
+                               QListWidgetItem, QMainWindow, QStyledItemDelegate, QMenu, QMessageBox, QPlainTextEdit, QProgressDialog,
                                QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStyleFactory,
                                QTableView, QTabWidget, QToolBar, QVBoxLayout, QWidget)
 
@@ -378,9 +378,9 @@ def drag_pixmap(text, dpr=1.0):
     f.setBold(True)
     fm = QFontMetrics(f)
     text = fm.elidedText(text, Qt.ElideRight, 260)
-    pad_x, off = 12, 16  # empty space up-left keeps the label clear of the cursor
+    pad_x, off_x, off_y = 12, 22, 4  # empty space up-left keeps the label clear of the cursor
     w, h = fm.horizontalAdvance(text) + 2 * pad_x, 28
-    pm = QPixmap(int((w + off) * dpr), int((h + off) * dpr))
+    pm = QPixmap(int((w + off_x) * dpr), int((h + off_y) * dpr))
     pm.setDevicePixelRatio(dpr)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -388,11 +388,11 @@ def drag_pixmap(text, dpr=1.0):
     p.setOpacity(0.82)
     p.setPen(Qt.NoPen)
     p.setBrush(QColor(ACC))
-    p.drawRoundedRect(QRectF(off, off, w, h), h / 2, h / 2)
+    p.drawRoundedRect(QRectF(off_x, off_y, w, h), h / 2, h / 2)
     p.setOpacity(1.0)
     p.setPen(QColor('#ffffff'))
     p.setFont(f)
-    p.drawText(QRectF(off, off, w, h), Qt.AlignCenter, text)
+    p.drawText(QRectF(off_x, off_y, w, h), Qt.AlignCenter, text)
     p.end()
     return pm
 
@@ -417,6 +417,25 @@ class SongTable(QTableView):
         drag.exec(Qt.CopyAction)
 
 
+class _DropTargetDelegate(QStyledItemDelegate):
+    """Paints the 'drop here' highlight under the item text (the style sheet would hide an item colour)."""
+
+    def __init__(self, sidebar):
+        super().__init__(sidebar)
+        self.sidebar = sidebar
+
+    def paint(self, painter, option, index):
+        hl = self.sidebar._hl
+        if hl is not None and self.sidebar.row(hl) == index.row():
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(QPen(QColor(ACC), 1.5))
+            painter.setBrush(QColor(200, 23, 74, 120))
+            painter.drawRoundedRect(QRectF(option.rect).adjusted(1, 1, -1, -1), 6, 6)
+            painter.restore()
+        super().paint(painter, option, index)
+
+
 class Sidebar(QListWidget):
     """Library views and collections. Songs (or audio files) can be dropped on a collection;
     the collection under the cursor lights up while dragging."""
@@ -428,6 +447,7 @@ class Sidebar(QListWidget):
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(False)
         self._hl = None
+        self.setItemDelegate(_DropTargetDelegate(self))
 
     @staticmethod
     def _cid(it):
@@ -437,16 +457,8 @@ class Sidebar(QListWidget):
     def _highlight(self, it):
         if it is self._hl:
             return
-        if self._hl is not None:
-            try:
-                self._hl.setData(Qt.BackgroundRole, None)
-                self._hl.setData(Qt.ForegroundRole, None)
-            except RuntimeError:
-                pass
         self._hl = it
-        if it is not None:
-            it.setBackground(QBrush(QColor(200, 23, 74, 110)))
-            it.setForeground(QBrush(QColor('#ffffff')))
+        self.viewport().update()
 
     def dragEnterEvent(self, e):
         md = e.mimeData()
