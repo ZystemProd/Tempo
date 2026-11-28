@@ -12,9 +12,9 @@ import time
 import numpy as np
 from PySide6.QtCore import (QAbstractTableModel, QModelIndex, QObject, QProcess, QSettings,
                             QSortFilterProxyModel, QStandardPaths, Qt, QTimer, Signal, QMimeData, QByteArray)
-from PySide6.QtCore import QRectF, QSize, QPointF
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize
 from PySide6.QtGui import (QAction, QColor, QFont, QIcon, QKeySequence, QPainter, QPainterPath, QPalette,
-                           QPen, QPixmap, QPolygonF, QShortcut)
+                           QPen, QPixmap, QPolygonF, QShortcut, QBrush, QDrag, QFontMetrics)
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QBoxLayout, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDoubleSpinBox, QFileDialog, QFormLayout, QFrame, QGridLayout, QGroupBox,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
@@ -370,30 +370,120 @@ class SongModel(QAbstractTableModel):
         return m
 
 
+def drag_pixmap(text, dpr=1.0):
+    """A small, see-through label for dragging songs: sits below-right of the cursor
+    so the place you drop on stays visible."""
+    f = QFont()
+    f.setPixelSize(13)
+    f.setBold(True)
+    fm = QFontMetrics(f)
+    text = fm.elidedText(text, Qt.ElideRight, 260)
+    pad_x, off = 12, 16  # empty space up-left keeps the label clear of the cursor
+    w, h = fm.horizontalAdvance(text) + 2 * pad_x, 28
+    pm = QPixmap(int((w + off) * dpr), int((h + off) * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setOpacity(0.82)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(ACC))
+    p.drawRoundedRect(QRectF(off, off, w, h), h / 2, h / 2)
+    p.setOpacity(1.0)
+    p.setPen(QColor('#ffffff'))
+    p.setFont(f)
+    p.drawText(QRectF(off, off, w, h), Qt.AlignCenter, text)
+    p.end()
+    return pm
+
+
+class SongTable(QTableView):
+    """Song list whose drag image is a small label instead of a picture of the whole rows."""
+
+    def startDrag(self, actions):
+        idxs = self.selectionModel().selectedRows(1)
+        if not idxs:
+            return
+        mime = self.model().mimeData(idxs)
+        if mime is None:
+            return
+        n = len(idxs)
+        title = str(self.model().data(idxs[0]) or '').replace('▶', '').strip()
+        text = ('♪  ' + title) if n == 1 else '♪  %d songs' % n
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.setPixmap(drag_pixmap(text, self.devicePixelRatioF()))
+        drag.setHotSpot(QPoint(0, 0))
+        drag.exec(Qt.CopyAction)
+
+
 class Sidebar(QListWidget):
+    """Library views and collections. Songs (or audio files) can be dropped on a collection;
+    the collection under the cursor lights up while dragging."""
     dropped = Signal(int, list)
+    files_dropped = Signal(object, list)
 
     def __init__(self):
         super().__init__()
         self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)
+        self.setDropIndicatorShown(False)
+        self._hl = None
+
+    @staticmethod
+    def _cid(it):
+        key = str(it.data(Qt.UserRole)) if it else ''
+        return int(key.split(':')[1]) if key.startswith('collection:') else None
+
+    def _highlight(self, it):
+        if it is self._hl:
+            return
+        if self._hl is not None:
+            try:
+                self._hl.setData(Qt.BackgroundRole, None)
+                self._hl.setData(Qt.ForegroundRole, None)
+            except RuntimeError:
+                pass
+        self._hl = it
+        if it is not None:
+            it.setBackground(QBrush(QColor(200, 23, 74, 110)))
+            it.setForeground(QBrush(QColor('#ffffff')))
 
     def dragEnterEvent(self, e):
-        e.acceptProposedAction() if e.mimeData().hasFormat(MIME) else e.ignore()
-
-    def dragMoveEvent(self, e):
-        it = self.itemAt(e.position().toPoint())
-        if e.mimeData().hasFormat(MIME) and it and str(it.data(Qt.UserRole)).startswith('collection:'):
+        md = e.mimeData()
+        if md.hasFormat(MIME) or md.hasUrls():
             e.acceptProposedAction()
         else:
             e.ignore()
 
+    def dragMoveEvent(self, e):
+        it = self.itemAt(e.position().toPoint())
+        cid = self._cid(it)
+        if cid is not None:
+            self._highlight(it)
+            e.acceptProposedAction()
+        elif e.mimeData().hasUrls():  # files dropped elsewhere in the sidebar: just add to the library
+            self._highlight(None)
+            e.acceptProposedAction()
+        else:
+            self._highlight(None)
+            e.ignore()
+
+    def dragLeaveEvent(self, e):
+        self._highlight(None)
+
     def dropEvent(self, e):
         it = self.itemAt(e.position().toPoint())
-        if it and str(it.data(Qt.UserRole)).startswith('collection:'):
-            ids = json.loads(bytes(e.mimeData().data(MIME)).decode())
-            self.dropped.emit(int(str(it.data(Qt.UserRole)).split(':')[1]), ids)
+        cid = self._cid(it)
+        self._highlight(None)
+        md = e.mimeData()
+        if md.hasFormat(MIME) and cid is not None:
+            self.dropped.emit(cid, json.loads(bytes(md.data(MIME)).decode()))
             e.acceptProposedAction()
+        elif md.hasUrls():
+            paths = [u.toLocalFile() for u in md.urls() if u.isLocalFile()]
+            if paths:
+                self.files_dropped.emit(cid, paths)
+                e.acceptProposedAction()
 
 
 class SyncDialog(QDialog):
@@ -571,7 +661,8 @@ class MainWindow(QMainWindow):
         self.ly_lines, self.ly_times, self.ly_synced, self.ly_cur = [], [], False, -1
         self.ly_results, self.ly_token, self.ly_song = [], 0, None
         self.ly_rec, self.ly_offset = None, 0.0
-        self.bus.added.connect(lambda n: (self.refresh(), self.status('Added %d song%s' % (n, '' if n == 1 else 's')),
+        self.bus.added.connect(lambda n: (self.refresh_sidebar(), self.refresh(),
+                                          self.status('Added %d song%s' % (n, '' if n == 1 else 's')),
                                           self._queue_analysis()))
         self.bus.analyzed.connect(self._on_analyzed)
         self.bus.synced.connect(self._on_synced)
@@ -675,6 +766,8 @@ class MainWindow(QMainWindow):
         self.sidebar.customContextMenuRequested.connect(self._sidebar_menu)
         self.sidebar.dropped.connect(lambda cid, ids: (self.lib.add_to_collection(cid, ids), self.refresh_sidebar(),
                                                        self.status('Added to collection')))
+        self.sidebar.files_dropped.connect(lambda cid, paths: self._add_paths(
+            paths, 'collection:%d' % cid if cid is not None else 'all'))
         sl.addWidget(self.sidebar)
         nb = QPushButton('+ New collection')
         nb.clicked.connect(self.new_collection)
@@ -707,7 +800,7 @@ class MainWindow(QMainWindow):
         self.proxy = QSortFilterProxyModel()
         self.proxy.setSourceModel(self.model)
         self.proxy.setSortRole(Qt.UserRole)
-        self.table = QTableView()
+        self.table = SongTable()
         self.table.setModel(self.proxy)
         self.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
         self.table.setSortingEnabled(True)
@@ -1631,10 +1724,10 @@ class MainWindow(QMainWindow):
             self.settings.setValue('lastdir', d)
             self._add_paths([d])
 
-    def _add_paths(self, paths):
+    def _add_paths(self, paths, target=None):
         self.status('Adding songs…')
         db_path = os.path.join(data_dir(), 'library.sqlite')
-        target = self.view
+        target = target or self.view
 
         sync = self.sync
         if sync:

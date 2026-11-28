@@ -79,4 +79,27 @@ for size in ((1440, 830), (1280, 760)):
     qa.processEvents()
     w.grab().save(os.path.join(out_dir, 'tempo-%dx%d.png' % size))
     print('saved', size)
+# drag-and-drop look: a collection lit up as the drop target, with the drag label at the cursor
+w.resize(1280, 760)
+for _ in range(3):
+    qa.processEvents()
+side = w.sidebar
+target = [side.item(i) for i in range(side.count()) if str(side.item(i).data(tapp.Qt.UserRole)).startswith('collection:')][1]
+side._highlight(target)
+qa.processEvents()
+shot = w.grab()
+from PySide6.QtGui import QPainter, QCursor  # noqa: E402
+from PySide6.QtCore import QPoint  # noqa: E402
+rect = side.visualItemRect(target)
+cursor_at = side.viewport().mapTo(w, rect.center() + QPoint(30, 0))
+painter = QPainter(shot)
+painter.drawPixmap(cursor_at, tapp.drag_pixmap('\u266a  Black or White (Single Version)', shot.devicePixelRatio()))
+painter.setPen(tapp.QColor('#ffffff'))
+painter.setBrush(tapp.QColor('#000000'))
+arrow = [cursor_at + QPoint(*xy) for xy in ((0, 0), (0, 16), (4, 12), (7, 18), (9, 17), (6, 11), (11, 11))]
+from PySide6.QtGui import QPolygon  # noqa: E402
+painter.drawPolygon(QPolygon(arrow))
+painter.end()
+shot.copy(0, 60, 640, 420).save(os.path.join(out_dir, 'tempo-drag.png'))
+print('saved drag')
 w.player.close()
